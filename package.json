@@ -1,0 +1,38 @@
+{
+  "name": "z-biz-game-masyu-cos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "数链 / Masyu — 一条闭环连过所有珠子。round 1 交出的引擎（出题 + 三道 soundness 门）之上，round 2a 加浏览器底盘与画面，以及最小诚实的 headless-Chrome 门禁。round 2 的 UI 预留端口对：HTTP 5276 / CDP 9376。",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.cjs",
+    "dev": "node server.cjs 5276",
+    "electron": "electron .",
+    "check": "for f in js/*.js js/*/*.js js/*/*/*.js tools/*.mjs; do [ -e \"$f\" ] || continue; node --check \"$f\" || exit 1; done; node --check server.cjs && node --check electron/main.cjs && node --check electron/preload.cjs && node --check tools/playtest.cjs && node --check tools/scenarios.js && bash -n tools/verify.sh && echo 'OK check'",
+    "test": "node tools/rule-test.mjs && node tools/pencil-test.mjs && node tools/counter-test.mjs && node tools/generator-probe.mjs",
+    "probe": "node tools/loop-probe.mjs",
+    "probe:generator": "node tools/generator-probe.mjs",
+    "verify": "bash tools/verify.sh"
+  },
+  "keywords": [
+    "game",
+    "puzzle",
+    "masyu",
+    "loop",
+    "pearl",
+    "logic",
+    "deduction",
+    "no-guess",
+    "unique-solution",
+    "electron"
+  ],
+  "author": "z-biz-game",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}
