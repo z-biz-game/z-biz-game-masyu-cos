@@ -16,6 +16,7 @@
     "test": "node tools/rule-test.mjs && node tools/pencil-test.mjs && node tools/counter-test.mjs && node tools/generator-probe.mjs",
     "probe": "node tools/loop-probe.mjs",
     "probe:generator": "node tools/generator-probe.mjs",
+    "balance": "node tools/balance.mjs",
     "verify": "bash tools/verify.sh"
   },
   "keywords": [
