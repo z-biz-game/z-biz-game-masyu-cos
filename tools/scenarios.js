@@ -917,6 +917,18 @@
     );
     A().setMode('loop');
 
+    // 键盘 H 与按钮必须是同一条路（面板上 .keyhint 就是这么写给人看的）
+    const dK = E().nextDeduction(gP.st);
+    const mvK = gP.moves;
+    const decK = decided(gP);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true, cancelable: true }));
+    await wait(20);
+    ck(
+      'hint: 键盘 H 走的就是按钮那条路（一按落一条结论、记一步、印那句话）',
+      gP.st.edges[dK.edge] === dK.value && gP.moves === mvK + 1 && decided(gP) === decK + 1 && text('#state-line').includes(E().RULE_TEXT[dK.rule]),
+      `边 ${dK.edge}=${gP.st.edges[dK.edge]}（想要 ${dK.value}）步数 ${mvK}→${gP.moves} 已定边 ${decK}→${decided(gP)} 状态行="${text('#state-line')}"`
+    );
+
     // 盘自己打脸那一支：真指针顶出一颗珠子三条例规的环边，这是玩家干得出来的事
     const gX = await A().newGame({ seed: 'gate-hint-6', sizeKey: '6x6' });
     await wait(60);
