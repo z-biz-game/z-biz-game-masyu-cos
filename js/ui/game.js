@@ -1,6 +1,6 @@
 // 对局状态。这一层**不含任何 Masyu 规则**：它只把玩家的落笔写进引擎自己的那条边数组
-// （js/engine/pencil.js 的 state.edges，UNKNOWN/LOOP/CUT 三态），并且只通过 verify() 问一句
-// 「这算赢了吗」。UI 里没有第二份记分板，所以画面和判胜不可能各说一套。
+// （js/engine/pencil.js 的 state.edges：UNKNOWN=0 没落笔 / LOOP=1 环边 / CUT=2 排除叉），
+// 并且只通过 verify() 问一句「这算赢了吗」。UI 里没有第二份记分板，所以画面和判胜不可能各说一套。
 //
 // 边的下标一律经 loop.js 的 edgeIdOf / neighbor / dirBetween 和 pencil.js 的 edgeOf / valOf
 // 拿，本文件不重算任何索引几何——重算一次就多一个「画对了但点偏一格」的来源。
@@ -11,6 +11,10 @@ import { toView } from '../engine/generate.js';
 
 export const DIRS = [UP, RIGHT, DOWN, LEFT];
 export const DIR_NAME = { [UP]: '上', [RIGHT]: '右', [DOWN]: '下', [LEFT]: '左' };
+// 三态字符表：一条边一个字符。'0' 是「没落笔」，'1' 是环边，'2' 是排除叉。
+// 上一轮发布的存档只有 '0'/'1' 两个字符——那张表原样嵌在这张表里（没有 '2' 而已），
+// 所以 decode 照旧读得动，不需要迁移、也不会读崩。
+export const MARK_CHAR = { [UNKNOWN]: '0', [LOOP]: '1', [CUT]: '2' };
 
 export class Game {
   constructor(puzzle) {
@@ -182,17 +186,30 @@ export class Game {
     return verify(probe);
   }
 
-  // 存档：只存原始 seed + 尺寸 + 每条边一个字符。生成器是确定性的，盘面从来不需要经过存储搬运。
+  // 存档：只存原始 seed + 尺寸 + 每条边一个字符（见 MARK_CHAR）。
+  // 生成器是确定性的，盘面从来不需要经过存储搬运，整份进度只有几百字节。
   encode() {
     let s = '';
-    for (let e = 0; e < this.st.edges.length; e++) s += this.st.edges[e] === LOOP ? '1' : '0';
+    for (let e = 0; e < this.st.edges.length; e++) s += MARK_CHAR[this.st.edges[e]] || '0';
     return s;
   }
 
-  decode(s) {
-    for (let e = 0; e < this.st.edges.length; e++) this.st.edges[e] = s.charCodeAt(e) === 49 ? LOOP : UNKNOWN;
+  // 读档。第二个参数是**存档里记着的步数**：以前这里无条件把 moves 归零，
+  // 于是「刷新一次页面，步数就变 0」——那是句谎话：撤销栈被清空是真的，玩家走过的步数不是。
+  // 现在归调用方说：续局路径把 resume.moves 交回来（js/main.js），换一局不传 = 从零开始。
+  //
+  // 字符只认 '1'→环边、'2'→排除叉，其余一律读成没落笔：上一轮发布的纯 '0'/'1' 存档照旧进得来、
+  // 不会崩；长度不够、串是乱码、甚至根本不是字符串也只会被读成空盘。少认一个字符 = 老存档读崩，
+  // 所以这里宁可「读成没落笔」也不 throw。
+  decode(s, moves = 0) {
+    const str = typeof s === 'string' ? s : '';
+    for (let e = 0; e < this.st.edges.length; e++) {
+      const c = str.charCodeAt(e);
+      this.st.edges[e] = c === 49 ? LOOP : c === 50 ? CUT : UNKNOWN;
+    }
     this.undoStack = [];
-    this.moves = 0;
+    this._group = null;
+    this.moves = Number.isFinite(moves) && moves > 0 ? Math.floor(moves) : 0;
   }
 
   // 键盘/无障碍读数：这一格现在什么样，全部来自引擎的 valOf/loopDirs。

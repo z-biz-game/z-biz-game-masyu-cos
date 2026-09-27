@@ -549,5 +549,196 @@
     return report({ loopLength: g.puzzle.loopLength, verify: st, seedBefore: before.seed, seedAfter: g2.seed });
   };
 
+  // ── 4/5. marks + resume：存档是三态的，旧存档读得动，续局不许谎报步数 ───────
+  // 「画一个叉 → 刷新 → 叉还在、步数不是 0」这条要求里有「刷新」两个字，所以它必须拆成两场：
+  //   marks 用真指针把叉画下去、让页面自己存盘，并把期望写进一个**只有 harness 认得**的键；
+  //   resume 在下一次真导航（playtest.cjs 每个场景都重新 Page.navigate）之后把它读回来。
+  // 期望存在 harness 键里而不是当场现算，正是为了让 resume 那条「步数不是 0」不是自我实现：
+  // 那个数字是上一场真走过的步数，这一场只是核对页面有没有把谎话改掉。
+  const GATE_KEY = 'masyu.gate.marks'; // app 从不读这个键（它只认 masyu.save.v1）
+
+  ng.marks = async () => {
+    const g = await A().newGame({ seed: 'gate-marks-6', sizeKey: '6x6' });
+    await wait(80);
+    if (!g) {
+      ck('marks: 页面出得了盘', false, 'newGame 返回空');
+      return report({ fatal: true });
+    }
+    const pal = P();
+    const accent = rgb(pal.accent);
+    const cutC = rgb(pal.cutMark);
+    const EC = E().edgeCount(g.w, g.h);
+    const mid = 2 * g.w + 2;
+    const cutCell = mid;
+    const cutDir = E().DOWN; // 与拖出来的那两条横边不重叠，叉与环各数各的
+    const eLoopA = E().edgeOf(g.st, mid - 1, E().RIGHT);
+    const eLoopB = E().edgeOf(g.st, mid, E().RIGHT);
+    const eCut = E().edgeOf(g.st, cutCell, cutDir);
+    const fp0 = g.puzzle.fingerprint;
+    const mv0 = g.moves;
+
+    await dragPath([mid - 1, mid, mid + 1]);
+    eq('marks: 拖出来的是两条环边、零个叉（存档之前先得有笔迹）', `${g.loopEdges().length}/${g.cutEdges().length}`, '2/0');
+    const hpt = halfOf(cutCell, cutDir);
+    await rightClickAt(hpt.x, hpt.y);
+    ck('marks: 右键那一下在引擎边数组上写的是 CUT（2），不是「没画」（0）', g.st.edges[eCut] === E().CUT, `得到 ${g.st.edges[eCut]} 想要 ${E().CUT}（边号 ${eCut}/${EC}）`);
+    eq('marks: 一笔拖拽 + 一次右键 = 两步（存档要搬的就是这个数）', String(g.moves - mv0), '2');
+    const realMoves = g.moves;
+
+    const saved = g.encode();
+    const ones = saved.split('').filter((ch) => ch === '1').length;
+    const twos = saved.split('').filter((ch) => ch === '2').length;
+    ck(`marks: 存档串里 '1' 出现 ${ones} 次、'2' 出现 ${twos} 次（CUT 没被压平成 '0'，长度 = 边数 ${EC}）`, saved.length === EC && ones === 2 && twos === 1, `长度=${saved.length} '1'=${ones} '2'=${twos} 串=${saved}`);
+    const charBad = [];
+    for (let e = 0; e < EC; e++) {
+      const v = g.st.edges[e];
+      const wantCh = v === E().CUT ? '2' : v === E().LOOP ? '1' : '0';
+      if (saved[e] !== wantCh) charBad.push(`${e}:态${v}→'${saved[e]}' 想要 '${wantCh}'`);
+    }
+    ck(`marks: ${EC} 条边逐条核对 encode 的字符表（'0'=没落笔 / '1'=环边 / '2'=排除叉）`, charBad.length === 0, charBad.slice(0, 4).join(' | '));
+
+    const r = A().store.resume();
+    ck(
+      'marks: 页面自己存下的 resume 里就是这张三态串与非零步数（存的是笔迹，不是答案）',
+      !!r && r.marks === saved && r.moves === g.moves && r.moves > 0 && r.seed === g.seed,
+      r ? `marks="${(r.marks || '').slice(0, 12)}…" moves=${r.moves} seed=${r.seed}` : 'store.resume() 返回空'
+    );
+
+    // 旧存档：上一轮发布的只有 '0'/'1' 两个字符。那张表原样嵌在新一里，所以必须照旧读得动。
+    let legacy = '';
+    for (let e = 0; e < EC; e++) legacy += e === eLoopA || e === eLoopB ? '1' : '0';
+    let threw = '';
+    try {
+      g.decode(legacy);
+    } catch (err) {
+      threw = String((err && err.message) || err);
+    }
+    ck(
+      `marks: 纯 0/1 的旧存档字符串读得进来且不崩（${legacy.length} 条里 2 个 '1'、0 个 '2'）`,
+      threw === '' && g.loopEdges().length === 2 && g.cutEdges().length === 0,
+      threw ? `抛了 ${threw}` : `环边=${g.loopEdges().length} 叉=${g.cutEdges().length}`
+    );
+    ck('marks: 旧串读进来的就是那两条环边，再写回去与原串逐字符相同（字符表不换代）', threw === '' && g.encode() === legacy, `得到 ${g.encode()} 想要 ${legacy}`);
+    eq('marks: 没给步数就是从零开始（decode 不许拿上一局的步数冒充，也不许把有步数的说成 0）', `${g.moves}/${g.undoStack.length}`, '0/0');
+
+    try {
+      g.decode('2'.repeat(EC));
+    } catch (err) {
+      threw = String((err && err.message) || err);
+    }
+    ck('marks: 满盘全是 \'2\' → 读进来是满盘排除叉而不是环（三态的字符谁也冒充不了谁）', threw === '' && g.cutEdges().length === EC && g.loopEdges().length === 0, `叉=${g.cutEdges().length}/${EC} 环=${g.loopEdges().length}`);
+
+    const junkBad = [];
+    for (const s of ['01', 'x'.repeat(EC), '2', '0'.repeat(EC + 9), '']) {
+      try {
+        g.decode(s, 5);
+      } catch (err) {
+        junkBad.push(`${JSON.stringify(s).slice(0, 12)}→${(err && err.message) || err}`);
+      }
+    }
+    ck(
+      'marks: 短串/乱码/超长串都只被读成空盘、一个都不抛（尺寸换过或串被截断也不崩）',
+      junkBad.length === 0 && g.loopEdges().length === 0 && g.cutEdges().length === 0,
+      `${junkBad.slice(0, 3).join(' | ')} 环=${g.loopEdges().length} 叉=${g.cutEdges().length}`
+    );
+    eq('marks: 传进来的步数就照着恢复（这一处就是原来那句「刷新一次步数归 0」的谎）', String(g.moves), '5');
+
+    // 续局的正路：main.js 的 newGame({seed, sizeKey, marks, moves})——boot 读存档恢复就走这一条。
+    let g2 = null;
+    try {
+      g2 = await A().newGame({ seed: 'gate-marks-6', sizeKey: '6x6', marks: saved, moves: realMoves });
+    } catch (err) {
+      ck('marks: 续局入口读三态存档不抛', false, String((err && err.message) || err));
+      return report({ fatal: true });
+    }
+    await wait(80);
+    ck(
+      'marks: 续局入口把三态整张搬回来了（叉在原来那条边上、两条环边也在、串逐字符相同）',
+      g2.st.edges[eCut] === E().CUT && g2.loopEdges().length === 2 && g2.cutEdges().length === 1 && g2.encode() === saved,
+      `边 ${eCut}=${g2.st.edges[eCut]} 环=${g2.loopEdges().length} 叉=${g2.cutEdges().length}`
+    );
+    ck('marks: 同一个 seed 重建出的是同一张盘（题面不经过存储搬运，指纹当然也一样）', g2.puzzle.fingerprint === fp0, `${fp0} → ${g2.puzzle.fingerprint}`);
+    eq('marks: 续局恢复的步数就是存下的那 2 步，面板读数也是 2（刷新一次归零那句谎话在这里现形）', `${g2.moves}/${text('#stat-moves')}`, '2/2');
+    const mk = markMid(cutCell, cutDir);
+    const mkPx = sample(mk.x, mk.y);
+    ck('marks: 恢复出来的叉在画面上仍然画得出来（叉中心像素是叉色，也不是环线色）', near(mkPx, cutC) && far(mkPx, accent), `期望 ${show3(cutC)} 得到 ${show3(mkPx)}（环线 ${show3(accent)}）`);
+
+    // 把期望交给下一场（真刷新之后）。写的是 harness 自己的键，app 读不到它。
+    localStorage.setItem(
+      GATE_KEY,
+      JSON.stringify({
+        seed: g2.seed,
+        sizeKey: g2.sizeKey,
+        fp: g2.puzzle.fingerprint,
+        moves: g2.moves,
+        marks: saved,
+        eCut,
+        eLoopA,
+        eLoopB,
+        cutCell,
+        cutDir,
+        segs: 2,
+        cuts: 1,
+      })
+    );
+    return report({ edges: EC, savedMoves: g2.moves, savedMark: saved.slice(eCut, eCut + 1), fingerprint: g2.puzzle.fingerprint });
+  };
+
+  ng.resume = async () => {
+    for (let i = 0; i < 300 && !(A() && A().state === 'ready'); i++) await wait(50);
+    await wait(120);
+    const raw = localStorage.getItem(GATE_KEY);
+    if (!raw || !A() || !A().game) {
+      ck('resume: 上一场 marks 的期望还在（这场靠它核对「刷新之后」，必须连着跑）', false, raw ? '页面没起来' : `${GATE_KEY} 是空的：跑 SCENARIOS="marks resume"`);
+      return report({ fatal: true });
+    }
+    const want = JSON.parse(raw);
+    const g = A().game; // 这是 boot() 读存档恢复出来的那一局，不是场景自己 newGame 出来的
+    const pal = P();
+    const accent = rgb(pal.accent);
+    const cutC = rgb(pal.cutMark);
+    const errs = w.__masyuErrs || [];
+
+    eq('resume: 刷新之后接着的是同一局（原始 seed 与指纹都没换）', `${g.seed}/${g.puzzle.fingerprint}`, `${want.seed}/${want.fp}`);
+    ck('resume: 启动这一路没有未捕获异常（旧存档读进来不崩）', errs.length === 0, errs.slice(0, 3).join(' | '));
+    ck('resume: 叉还在 —— 引擎边数组上那一条刷新之后仍然是 CUT', g.st.edges[want.eCut] === E().CUT, `得到 ${g.st.edges[want.eCut]} 想要 ${E().CUT}`);
+    const mk = markMid(want.cutCell, want.cutDir);
+    const mkPx = sample(mk.x, mk.y);
+    ck('resume: 叉还在 —— 画面也仍然把它画出来了（叉中心是叉色，不是环线色）', near(mkPx, cutC) && far(mkPx, accent), `期望 ${show3(cutC)} 得到 ${show3(mkPx)}`);
+    ck(
+      'resume: 步数不是 0 —— 恢复出来的 moves 与面板读数都等于上一场真走过的那个数',
+      want.moves > 0 && g.moves === want.moves && text('#stat-moves') === String(want.moves),
+      `game.moves=${g.moves} 读数="${text('#stat-moves')}" 存档里是 ${want.moves}`
+    );
+    ck('resume: 整张笔迹逐字符搬回来了（存档串 == 恢复后的 encode）', g.encode() === want.marks, `得到 ${g.encode()} 想要 ${want.marks}`);
+    eq('resume: 两个读数跟着刷新回来（已画环段 / 已排除）', `${text('#stat-segs')}/${text('#stat-cuts')}`, `${want.segs}/${want.cuts}`);
+
+    // 诚实的那一半：撤销栈确实跨不过刷新，所以「步数」不是「还能撤这么多步」的承诺。
+    const mvR = g.moves;
+    const undone = g.undo();
+    ck('resume: 撤销栈清空是真的（空栈 undo 返回 false、一步都不许多记）', g.undoStack.length === 0 && undone === false && g.moves === mvR, `栈=${g.undoStack.length} undo=${undone} 步数=${mvR}→${g.moves}`);
+
+    // 旧格式（上一轮发布的纯 0/1 串）走的是**同一条续局入口**：把它读崩或读成 0 步，都算没兼容。
+    const legacy = want.marks.replace(/2/g, '0');
+    let gOld = null;
+    let threw = '';
+    try {
+      gOld = await A().newGame({ seed: want.seed, sizeKey: want.sizeKey, marks: legacy, moves: 7 });
+      await wait(60);
+    } catch (err) {
+      threw = String((err && err.message) || err);
+    }
+    ck(
+      'resume: 纯 0/1 的旧存档经 newGame(marks, moves) 这条路也读得进来（2 条环边、0 个叉、步数照搬 7）',
+      threw === '' && !!gOld && gOld.loopEdges().length === want.segs && gOld.cutEdges().length === 0 && gOld.moves === 7 && text('#stat-moves') === '7',
+      threw ? `抛了 ${threw}` : `环=${gOld && gOld.loopEdges().length} 叉=${gOld && gOld.cutEdges().length} 步数=${gOld && gOld.moves}/${text('#stat-moves')}`
+    );
+
+    // 收干净：这两个键都是这一场自己造的，留着下一次跑的场景就会读到上一局的盘。
+    localStorage.removeItem(GATE_KEY);
+    A().store.clearResume();
+    return report({ resumedMoves: mvR, resumedCuts: g.cutEdges().length, seed: g.seed });
+  };
+
   w.__ng = ng;
 })(window);

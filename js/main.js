@@ -158,7 +158,7 @@ async function generate(seed, sizeKey) {
   return p;
 }
 
-async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFAULT_SIZE, marks = null, elapsedMs = 0 } = {}) {
+async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFAULT_SIZE, marks = null, moves = 0, elapsedMs = 0 } = {}) {
   const p = await generate(seed, sizeKey);
   if (!p.ok) {
     stateLine.className = 'state-line bad';
@@ -166,7 +166,9 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
     return null;
   }
   game = new Game(p);
-  if (typeof marks === 'string' && marks.length === edgeCount(p.w, p.h)) game.decode(marks);
+  // 存档的字符串长度必须正好对上这张盘的边数——对不上就不搬（尺寸换过、串被截断都算）。
+  // 步数只在笔迹真的搬过来之后才跟着搬：盘是空的却说「这局走了 12 步」又是另一句谎话。
+  if (typeof marks === 'string' && marks.length === edgeCount(p.w, p.h)) game.decode(marks, moves);
   won = false;
   hideVeil();
   // 键盘光标只在真的用键盘之后才出现：一个刚用鼠标点开游戏的玩家不该先看见一圈虚线
@@ -419,7 +421,11 @@ window.masyu = {
   setMode('loop');
   const r = Store.resume();
   let started = null;
-  if (r) started = await newGame({ seed: r.seed, sizeKey: r.sizeKey, marks: r.marks, elapsedMs: r.elapsedMs });
+  if (r) {
+    // 续局要把存下的步数一并交回去：只搬笔迹不搬步数，画面就会显示「0 步」，
+    // 而盘上明明已经画了十几段。moves 是存档里就有的字段，不是这里现编的数字。
+    started = await newGame({ seed: r.seed, sizeKey: r.sizeKey, marks: r.marks, moves: r.moves, elapsedMs: r.elapsedMs });
+  }
   if (!started) await newGame({});
   window.masyu.state = 'ready';
 })();
