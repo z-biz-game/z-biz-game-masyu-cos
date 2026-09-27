@@ -67,10 +67,12 @@
         </div>
 
         <div class="acts">
+          <button id="btn-hint" class="ghost" type="button" title="问引擎要下一条被迫的结论：它落一笔，并把那条规则的那句话说给你。推不动了就直说推不动。">提示</button>
           <button id="btn-undo" class="ghost" type="button">撤销</button>
           <button id="btn-clear" class="ghost" type="button">全清</button>
           <button id="btn-new" class="primary" type="button">换一局</button>
         </div>
+        <p class="rules-note">「提示」只给铅笔的下一条<b>被迫</b>结论（环边就落一段、该排除就落一个叉），并把那条规则的原文印在上面那行里。铅笔推不动时它就说推不动——它不会替你猜，也不会去看答案。</p>
 
         <div class="stats">
           <div class="stat"><span>黑珠</span><b id="stat-black" class="mono">0</b></div>
@@ -104,7 +106,7 @@
           <span><i class="sw sw-end"></i>还没接上的端点</span>
           <span><i class="sw sw-bad"></i>度数异常（接不通）</span>
         </div>
-        <p class="keyhint"><b>拖拽</b> 连环 · <b>右键</b> 把指针压着的那条边画成叉（再点一次擦回没落笔） · <b>方向键</b> 移光标 · <b>回车</b> 从锚点动手 · <b>退格</b> 擦光标格 · <b>E</b> 换画笔（画环／排除叉／擦掉） · <b>Z</b> 撤销 · <b>N</b> 换一局</p>
+        <p class="keyhint"><b>拖拽</b> 连环 · <b>右键</b> 把指针压着的那条边画成叉（再点一次擦回没落笔） · <b>方向键</b> 移光标 · <b>回车</b> 从锚点动手 · <b>退格</b> 擦光标格 · <b>E</b> 换画笔（画环／排除叉／擦掉） · <b>H</b> 提示 · <b>Z</b> 撤销 · <b>N</b> 换一局</p>
       </aside>
     </section>
   </main>

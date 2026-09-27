@@ -213,6 +213,9 @@ select {
 }
 .state-line.bad { color: var(--error); }
 .state-line.good { color: var(--success); }
+/* 提示那句 RULE_TEXT 借环线的暖色：它是「引擎替玩家想通的一步」说的话，
+   既不是错误也不是胜利。状态行本来就在 aria-live 里，所以这段话同时也念给读屏。 */
+.state-line.hint { color: var(--accent-edge); }
 
 /* ---------- panel ---------- */
 
@@ -228,7 +231,9 @@ select {
 
 .modes { display: flex; gap: var(--space-gutter); }
 .modes .mode { flex: 1; }
-.acts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-gutter); }
+/* 三个动作一行放得下（提示 / 撤销 / 全清），换一局仍然独占一行。
+   少放一列会让最后一个按钮挤成半宽——boot 场景量的就是这几个命中盒。 */
+.acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-gutter); }
 .acts #btn-new { grid-column: 1 / -1; }
 
 .stats {

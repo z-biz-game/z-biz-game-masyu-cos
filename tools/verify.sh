@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot browser verification: real Chrome, real DOM, real pixels, scripted scenarios.
 #
-#   bash tools/verify.sh                     # boot + render + play + marks + resume，再一次 Pages 前缀冒烟
+#   bash tools/verify.sh                     # boot+render+play+marks+resume+hint，再一次 Pages 前缀冒烟
 #   SCENARIOS="render" bash tools/verify.sh
 #   SCENARIOS="marks resume" bash tools/verify.sh   # 两场连跑：marks 写期望，resume 跨真刷新读它
 #   SHOTS=2 bash tools/verify.sh             # 顺手往 tools/shots/ 落两张 PNG
@@ -109,7 +109,8 @@ FAILED=0
 # marks → resume 是一对，顺序不能换：前一场用真指针画叉并让页面存盘，后一场在**下一次真导航**
 # 之后核对「叉还在、步数不是 0」。同一个 Chrome profile 里 localStorage 是留得住的，
 # 所以「刷新」这一步不需要假的模拟。
-for s in ${SCENARIOS:-boot render play marks resume}; do
+# hint 放最后：它会赢一局，而赢会 clearResume——排在前面就会把 resume 那场的存档吃掉。
+for s in ${SCENARIOS:-boot render play marks resume hint}; do
   echo "=== $s ==="
   node tools/playtest.cjs scenario "$s" 2>/tmp/masyu-$s.console.log | tail -1 | sed 's/^RESULT //' | python3 -c "
 import sys, json

@@ -1,4 +1,5 @@
-// 浏览器里的场景套件，由 tools/playtest.cjs 注入真实页面后跑。三个场景：boot / render / play。
+// 浏览器里的场景套件，由 tools/playtest.cjs 注入真实页面后跑。六个场景：
+// boot / render / play / marks / resume / hint（后两个里 marks→resume 与 hint 有顺序要求，见 verify.sh）。
 //
 // 这里只认三种证据：DOM 的矩形、画布的像素、真指针事件打进去之后的读数。`.hidden` 说的是代码
 // 想干什么，一个 rect 和一个像素才是玩家拿到了什么。这个仓最容易出的事故恰好是「引擎里对、
@@ -209,6 +210,16 @@
     );
     const cutsEl = $('#stat-cuts');
     ck('boot: 「已排除」读数挂在面板上（三态的第三条有地方报数）', !!cutsEl && /^\d+$/.test(cutsEl.textContent.trim()), cutsEl ? `内容="${cutsEl.textContent}"` : '没有 #stat-cuts');
+
+    // 「提示」是这一轮新加的动作，命中盒先量：三个动作挤一行很容易挤成半宽或溢出面板。
+    const hintBtn = $('#btn-hint');
+    const hr = hintBtn.getBoundingClientRect();
+    const hitHint = document.elementFromPoint(Math.round(hr.left + hr.width / 2), Math.round(hr.top + hr.height / 2));
+    ck(
+      'boot: 「提示」按钮有非零命中盒，且中心那一下命中的就是它',
+      hr.width > 30 && hr.height > 18 && (hitHint === hintBtn || hintBtn.contains(hitHint)),
+      `矩形 ${Math.round(hr.width)}x${Math.round(hr.height)} 中心命中 ${hitHint ? hitHint.tagName + '#' + hitHint.id : 'null'}`
+    );
 
     eq('boot: seed 铭牌写的就是这一局用的原始 seed', text('#stat-seed'), `seed ${A().game.seed}`);
 
@@ -738,6 +749,219 @@
     localStorage.removeItem(GATE_KEY);
     A().store.clearResume();
     return report({ resumedMoves: mvR, resumedCuts: g.cutEdges().length, seed: g.seed });
+  };
+
+  // ── 6. hint：空盘只连点「提示」也要推到 status().ok（本轮最贵的一条门禁）────
+  // 一场证三件事，缺一不可：
+  //   1) 一次点击落的正是引擎**当场**说的那一条被迫结论（环就一段、排除就一个叉）；
+  //   2) 那一笔在 Game 的账上（步数 +1、撤销栈 +1 组、已定边 +1）——撤销与存档继续是真的；
+  //   3) 推到底 status().ok 为真，且推出来的 LOOP 边集合与参考环**逐条**对得上。
+  // 对账读的是 puzzle.solution —— 那是答案，只许在 harness 里读一次；玩家那条路（按钮 →
+  // hint() → Game.setEdgeById）从头到尾没碰过它，所以下面「点击数 == 边数」与「一次一条」才说明
+  // 它真的是铅笔一步一步推出来的，不是把答案抄上牌。对账只活在这一场，产品代码里没有一行。
+  ng.hint = async () => {
+    const g = await A().newGame({ seed: 'gate-hint-6', sizeKey: '6x6' });
+    await wait(80);
+    if (!g) {
+      ck('hint: 页面出得了盘', false, 'newGame 返回空');
+      return report({ fatal: true });
+    }
+    const pal = P();
+    const accent = rgb(pal.accent);
+    const cutC = rgb(pal.cutMark);
+    const EC = E().edgeCount(g.w, g.h);
+    const btn = document.querySelector('#btn-hint');
+    const rect = btn.getBoundingClientRect();
+    const hitBtn = document.elementFromPoint(Math.round(rect.left + rect.width / 2), Math.round(rect.top + rect.height / 2));
+    ck(
+      'hint: 「提示」按钮点得到（命中盒非零、中心命中的是它自己，不是一块盖上来的 veil）',
+      rect.width > 30 && rect.height > 18 && (hitBtn === btn || btn.contains(hitBtn)),
+      `矩形 ${Math.round(rect.width)}x${Math.round(rect.height)} 命中 ${hitBtn ? hitBtn.tagName + '#' + hitBtn.id : 'null'}`
+    );
+    eq('hint: 起点是空盘（一条笔迹都没有，整条路都得铅笔自己推）', `${g.loopEdges().length}/${g.cutEdges().length}/${E().unknownCount(g.st)}`, `0/0/${EC}`);
+
+    const badLand = [];
+    const badBook = [];
+    const badText = [];
+    const rules = new Set();
+    const kinds = { loop: 0, cut: 0 };
+    let clicks = 0;
+    let stalledAt = -1;
+    for (let i = 0; i < EC + 6; i++) {
+      const d = E().nextDeduction(g.st); // harness 独立问一次：此刻被迫的是哪一条、哪一态
+      if (d.stalled) { stalledAt = i; break; }
+      const mv0 = g.moves;
+      const st0 = g.undoStack.length;
+      const dec0 = decided(g);
+      btn.click();
+      await wait(14);
+      // 状态行要在这一击之后、下一击之前读：它是这句话唯一的一次机会
+      const line = text('#state-line');
+      clicks++;
+      rules.add(d.rule);
+      kinds[d.value === E().CUT ? 'cut' : 'loop']++;
+      if (g.st.edges[d.edge] !== d.value) {
+        badLand.push(`第 ${clicks} 次：引擎说边 ${d.edge}=${d.value}，盘上是 ${g.st.edges[d.edge]}`);
+        break;
+      }
+      if (g.moves - mv0 !== 1 || g.undoStack.length - st0 !== 1 || decided(g) !== dec0 + 1) {
+        badBook.push(`第 ${clicks} 次：步数 +${g.moves - mv0}、栈 +${g.undoStack.length - st0}、已定边 +${decided(g) - dec0}（三样都该正好 1）`);
+        break;
+      }
+      // 最后那一击同时是「赢了一局」那一击：checkWin 之后状态行归判词，这是它对所有来源的落笔
+      // 一视同仁的行为（拖拽赢的也一样），所以这里按 won 分两种话要对。
+      const want = A().won ? 'verify() 判定通过' : `${E().RULE_TEXT[d.rule]} —— ${d.why}`;
+      if (!line.includes(want)) {
+        badText.push(`第 ${clicks} 次（${d.rule}${A().won ? '，同时是最后一击' : ''}）状态行="${line}"，想要含 "${want}"`);
+        break;
+      }
+      if (g.status().ok) break;
+    }
+
+    ck(`hint: ${clicks} 次点击、${rules.size} 条规则轮着说话，每一次落的都是引擎当场说的那一条（一次都没落错边/落错态）`, badLand.length === 0 && clicks > 0, badLand.slice(0, 3).join(' | '));
+    ck('hint: 提示的落笔全在 Game 的账上（一次点击 = 步数 +1 = 撤销栈 +1 组 = 已定边 +1，没有任何旁路）', badBook.length === 0, badBook.slice(0, 3).join(' | '));
+    ck('hint: 状态行印的就是那条规则的 RULE_TEXT 原句（外加引擎那句 why），最后一击交还给 verify() 的判词；没有一句是另编的安慰话', badText.length === 0, badText.slice(0, 2).join(' | '));
+
+    const st = g.status();
+    ck(
+      `hint: 空盘只连点「提示」就推到 status().ok（中途一次都没推不动，环长 ${st.length} == 出题那圈），而且赢得是 verify() 说的`,
+      stalledAt < 0 && st.ok === true && st.length === g.puzzle.loopLength && A().won === true,
+      `${JSON.stringify(st)} 点击=${clicks} 中途 stalled@=${stalledAt} won=${A().won}`
+    );
+    ck(
+      `hint: 每一击只落一条结论（点击数 ${clicks} == 落笔数 == 已定边数 == 步数，一次都没有「顺手多落几条」）`,
+      decided(g) === clicks && g.moves === clicks && kinds.loop + kinds.cut === clicks,
+      `点击=${clicks} 已定边=${decided(g)} 步数=${g.moves} 落笔=${JSON.stringify(kinds)}`
+    );
+
+    // 逐条对账：参考环 vs 提示推出来的 LOOP 边集合（用引擎自己的 edgeOf/dirBetween 现算，不复用盘上的值）
+    const order = E().loopOrder(g.w, g.h, g.puzzle.solution);
+    const refEdges = [];
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      const b = order[(i + 1) % order.length];
+      refEdges.push(E().edgeOf(g.st, a, E().dirBetween(g.w, a, b)));
+    }
+    const got = g.loopEdges();
+    const missing = refEdges.filter((e) => got.indexOf(e) < 0);
+    const extra = got.filter((e) => refEdges.indexOf(e) < 0);
+    ck(
+      `hint: ${refEdges.length} 条逐条对账——提示推出的 LOOP 边集合 == 参考环（多 ${extra.length} 少 ${missing.length}）；对账只在 harness 里做`,
+      refEdges.length === g.puzzle.loopLength && new Set(refEdges).size === refEdges.length && missing.length === 0 && extra.length === 0,
+      `多了 ${extra.slice(0, 4).join(' ')} 少了 ${missing.slice(0, 4).join(' ')}`
+    );
+    ck(
+      `hint: ${clicks} 击里提示落了 ${kinds.loop} 段环 + ${kinds.cut} 个叉，段数正好等于参考环长（环与叉都真的落过，不是只画环的半个功能）`,
+      kinds.loop === order.length && kinds.cut === clicks - order.length && kinds.loop > 0 && kinds.cut > 0,
+      JSON.stringify(kinds) + ` 参考环长=${order.length} 点击=${clicks}`
+    );
+    const cutOnLoop = refEdges.filter((e) => g.st.edges[e] === E().CUT).length;
+    ck('hint: 参考环上没有一条被推成排除叉（环与叉不互相冒用，那些叉不是猜出来的）', cutOnLoop === 0, `${cutOnLoop}/${refEdges.length} 条环边被标成了叉`);
+    // 停在 ok 的时候为什么还能有没定的边：status() 的语义是「玩家没画的地方就是不在环上」。
+    // 这些边必须一条都不在参考环上——否则「赢了」就是靠把环边当成没画蒙过去的。
+    const und = [];
+    for (let e = 0; e < EC; e++) if (g.st.edges[e] === E().UNKNOWN) und.push(e);
+    ck(
+      `hint: 赢的时候剩下 ${und.length} 条边没标，它们没有一条在参考环上（没画的就是不在环上，这条语义 status() 与玩家看到的是同一份）`,
+      und.length === EC - clicks && und.every((e) => refEdges.indexOf(e) < 0),
+      `未定 ${und.slice(0, 6).join(' ')} 里有 ${und.filter((e) => refEdges.indexOf(e) >= 0).length} 条是环边；未定=${und.length} 想要 ${EC - clicks}`
+    );
+
+    // 画面也得跟着：结论不只写在数组里
+    const pxBadLoop = [];
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      const b = order[(i + 1) % order.length];
+      const d = E().dirBetween(g.w, a, b);
+      const m = segMid(a, d);
+      if (!m || !near(sample(m.x, m.y), accent, 40)) pxBadLoop.push(`${a}:${d}`);
+    }
+    ck(`hint: ${order.length} 段推出来的环边在画面上逐段是环线色（玩家不必读数组就知道铅笔连到了哪儿）`, pxBadLoop.length === 0, pxBadLoop.slice(0, 4).join(' '));
+    const pxBadCut = [];
+    let cutSeen = 0;
+    for (const [cell, d] of allEdges(g)) {
+      if (E().valOf(g.st, cell, d) !== E().CUT) continue;
+      cutSeen++;
+      const m = markMid(cell, d);
+      const px = sample(m.x, m.y);
+      if (!m || !near(px, cutC) || near(px, accent, 40)) pxBadCut.push(`${cell}:${d}`);
+    }
+    ck(
+      `hint: ${cutSeen} 个推出来的排除叉在画面上个个是叉色（赢了的盘上仍然看得见铅笔排除了什么）`,
+      pxBadCut.length === 0 && cutSeen === clicks - order.length,
+      `画错的 ${pxBadCut.slice(0, 4).join(' ')}；叉数 ${cutSeen} 想要 ${clicks - order.length}`
+    );
+
+    // 已经赢了之后再按提示：什么都不该发生（不然步数与笔迹就成了「提示还在替我走」的假账）
+    const mvW = g.moves;
+    const decW = decided(g);
+    btn.click();
+    await wait(20);
+    ck(
+      'hint: 赢了之后再按提示什么都不追加（步数不涨、笔迹不多、状态行还是 verify() 那句判词）',
+      g.moves === mvW && decided(g) === decW && A().won === true && text('#state-line').includes('verify() 判定通过'),
+      `步数 ${mvW}→${g.moves} 已定边 ${decW}→${decided(g)} won=${A().won} 状态行="${text('#state-line')}"`
+    );
+
+    // 提示落的不是「当前那支笔」，是引擎说的那一态：笔尖调到擦掉也得照样落笔
+    const gP = await A().newGame({ seed: 'gate-hint-pen', sizeKey: '6x6' });
+    await wait(60);
+    A().setMode('erase');
+    const dp = E().nextDeduction(gP.st);
+    btn.click();
+    await wait(20);
+    ck(
+      'hint: 画笔切到「擦掉」时提示照样落引擎那一态（提示不是当前笔的马甲，它写的是结论的值）',
+      dp.value !== E().UNKNOWN && gP.st.edges[dp.edge] === dp.value && gP.moves === 1 && decided(gP) === 1,
+      `边 ${dp.edge} 想要 ${dp.value} 得到 ${gP.st.edges[dp.edge]}（擦掉那支笔的 kind=${E().UNKNOWN}）步数=${gP.moves}`
+    );
+    A().setMode('loop');
+
+    // 盘自己打脸那一支：真指针顶出一颗珠子三条例规的环边，这是玩家干得出来的事
+    const gX = await A().newGame({ seed: 'gate-hint-6', sizeKey: '6x6' });
+    await wait(60);
+    const mid = 2 * gX.w + 2;
+    await dragPath([mid - 1, mid, mid + 1]);
+    await dragPath([mid + gX.w, mid]);
+    const dX = E().nextDeduction(gX.st);
+    const decX = decided(gX);
+    const mvX = gX.moves;
+    const stX = gX.undoStack.length;
+    btn.click();
+    await wait(20);
+    ck(
+      'hint: 引擎说「盘自己打脸」时提示不落笔、不前进，只把那句矛盾原样交回状态行',
+      !!dX.contradiction && text('#state-line').includes(dX.why) && gX.moves === mvX && gX.undoStack.length === stX && decided(gX) === decX && A().won === false,
+      `nextDeduction=${JSON.stringify(dX).slice(0, 130)} 状态行="${text('#state-line')}" 步数 ${mvX}→${gX.moves} 栈 ${stX}→${gX.undoStack.length} 已定边 ${decX}→${decided(gX)}`
+    );
+
+    // 「推不动了」那一支：把规则唯一的依据（题面珠子）从这一局的引擎状态里拿掉，铅笔就无路可走。
+    // 动的是 st.pearls，一条 st.edges 都没动 —— 造的是「没有题面可依据」，不是造结论；
+    // 所以下面数的仍然是「提示一格里都没落」。
+    const gS = await A().newGame({ seed: 'gate-hint-stall', sizeKey: '6x6' });
+    await wait(60);
+    gS.st.pearls.fill(0);
+    A().render();
+    const mvS = gS.moves;
+    const stS = gS.undoStack.length;
+    btn.click();
+    await wait(20);
+    ck(
+      'hint: 铅笔推不动了就把「推不动」说在状态行上，一格都不落（不猜、不读答案、也不装成赢了）',
+      text('#state-line').includes('推不动') && E().nextDeduction(gS.st).stalled === true && gS.moves === mvS && gS.undoStack.length === stS && decided(gS) === 0 && A().won === false && gS.status().ok === false,
+      `状态行="${text('#state-line')}" 步数 ${mvS}→${gS.moves} 栈 ${stS}→${gS.undoStack.length} 已定边=${decided(gS)}`
+    );
+
+    A().store.clearResume();
+    return report({
+      clicks,
+      edges: EC,
+      rules: rules.size,
+      loop: g.loopEdges().length,
+      cuts: g.cutEdges().length,
+      verify: st,
+      loopLength: g.puzzle.loopLength,
+    });
   };
 
   w.__ng = ng;

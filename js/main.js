@@ -4,14 +4,16 @@
 // 门禁在浏览器里绿一次，等于玩家那侧的出题器/推理机同时绿一次。
 //
 // 这里没有一条 Masyu 规则：落笔写进引擎的边数组，赢不赢问 verify()，画什么由 render/board.js
-// 读同一批数字。唯一留在这层的判断是「指针这一下落在哪一格、连着上一格的方向是什么」，
+// 读同一批数字。「提示」也不在这里判断任何事——它只是问 nextDeduction 要一条被迫的结论，
+// 再把那个边号交给 Game 的公开入口，和玩家自己拖的一笔是同一条路。
+// 唯一留在这层的判断是「指针这一下落在哪一格、连着上一格的方向是什么」，
 // 而那也要经 view.dirFromTo → loop.js 的 dirBetween/neighbor。
 
 import { Palette, Space, applyThemeVars, setReduceMotion } from './theme.js';
 import { Store } from './store.js';
 import { makePuzzle, toView, SIZES, parseSize } from './engine/generate.js';
 import { edgeIdOf, edgeCount, neighbor, dirBetween, checkLoop, loopOrder, UP, RIGHT, DOWN, LEFT, BLACK, WHITE } from './engine/loop.js';
-import { createState, verify, solveWithRules, RULE_ORDER, RULE_TEXT, edgeOf, valOf, unknownCount, LOOP, CUT, UNKNOWN } from './engine/pencil.js';
+import { createState, verify, solveWithRules, nextDeduction, RULE_ORDER, RULE_TEXT, edgeOf, valOf, unknownCount, LOOP, CUT, UNKNOWN } from './engine/pencil.js';
 import { BoardView } from './render/board.js';
 import { Game } from './ui/game.js';
 
@@ -40,6 +42,10 @@ let drag = null;
 let cursor = -1; // 键盘光标
 let anchor = -1; // 键盘连线锚点
 let won = false;
+// 提示说过的那句话，以及它挂在哪一步之后。玩家再落一笔（或撤一步、换一局）它就过期——
+// 一句「珠子必须在环上」还挂在状态行上，而盘已经变了三回，那是假线索。
+let hintNote = null;
+let noteMoves = -1;
 
 // ── 时钟 ────────────────────────────────────────────────────────────────
 let startedAt = 0;
@@ -119,6 +125,15 @@ function paintStats() {
         ? '拖拽相邻两格连一段环；右键落在哪条边上就把那条边画成排除叉。黑珠那格必须拐，白珠那格必须直穿。'
         : `已画 ${segs.length} 段、排除 ${cuts.length} 条，${ends.length} 个没接上的端点。引擎说：${v.why || '成环了'}`;
   }
+  // 提示那句话盖在进度播报之上：它是「刚刚发生的那件事」，而进度行每一帧都能重算出来。
+  // 过期条件是步数变了（或者这局已经赢了），不是这里现编一个计时器。
+  if (hintNote && !won && game.moves === noteMoves) {
+    stateLine.className = 'state-line hint';
+    stateLine.textContent = hintNote;
+  } else {
+    hintNote = null;
+    noteMoves = -1;
+  }
 }
 
 // ── 判胜：唯一的入口是引擎的 verify，UI 不给自己记账 ─────────────────────
@@ -135,6 +150,52 @@ function checkWin() {
   Store.clearResume();
   render();
   return true;
+}
+
+// ── 提示：引擎的下一条被迫结论，落笔仍然只经 Game 的公开入口 ──────────────────
+// 关键不在「有个按钮」，而在**它和玩家自己画的是同一个写入者**：nextDeduction 只给一个边号，
+// 边号 →（格, 方向）由 Game.setEdgeById 现取引擎预计算的 st.edgeCells 和 loop.js 的 dirBetween，
+// 再走 setEdge。于是提示落的每一笔都进撤销栈、在 moves 上记一步：玩家撤得掉，门禁也数得出。
+// 反过来，只要有一句结论绕过 Game 直接写 st.edges，那一步就不在账上 —— 撤销计数与存档就开始
+// 各说一套。所以这里**不**用引擎自带的 applyDeduction（它写数组、记自己的 log，不认识撤销栈），
+// window.masyu.engine 里也就不挂它：页面上没有一条能把结论直接写进边数组的路。
+//
+// nextDeduction 只有三种回话（见 js/engine/pencil.js 的函数注释），这里就只有三个分支：
+// 被迫结论 / 盘自己打脸 / 推不动了。没有第四支「那提示替你猜一个」——猜就是读答案的另一面，
+// 而答案（puzzle.solution、face.segs）在这一条路上一个字节都没被碰过。
+function hint() {
+  if (!game || won) return null;
+  startClock();
+  const d = nextDeduction(game.st);
+  const mv = game.moves;
+  if (d && d.contradiction) {
+    // 打脸的时候铅笔不肯再往前推：该撤哪一笔是玩家自己的判断。这里不落笔，也不装成落了一笔。
+    hintNote = `盘上自己打脸了（${d.rule}）：${d.why}。提示这一步什么都不画 —— 先撤掉那笔再说。`;
+    noteMoves = mv;
+    render();
+    return { kind: 'contradiction', d, moved: false };
+  }
+  if (!d || d.stalled) {
+    hintNote = `铅笔推不动了：${d && d.why ? d.why : `${RULE_ORDER.length} 条规则轮了一圈，没话可说`}。提示不会替你猜，也不会去读答案 —— 剩下的得你自己接。`;
+    noteMoves = mv;
+    render();
+    return { kind: 'stalled', d, moved: false };
+  }
+  const rec = game.setEdgeById(d.edge, d.value);
+  if (!rec) {
+    // Game 拒收了引擎给的那一条（边号在盘外，或那条已经是这个值）。落不下去就照直说落不下去，
+    // 不许退回「那按我们自己算的画」——那正是第二记分板的开头。
+    hintNote = `提示这次没落下去：引擎给的是边号 ${d.edge}，Game 拒收（不在盘上或已经这样了）。再按一次。`;
+    noteMoves = mv;
+    render();
+    return { kind: 'noop', d, moved: false };
+  }
+  hintNote = `${d.ruleText} —— ${d.why}`;
+  noteMoves = game.moves; // 这一笔已经记上了，所以这句话挂在「这一笔之后」的那个步数上
+  render();
+  checkWin();
+  persist();
+  return { kind: d.value === CUT ? 'cut' : 'loop', d, rec, moved: true };
 }
 
 function hideVeil() {
@@ -169,6 +230,9 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
   // 存档的字符串长度必须正好对上这张盘的边数——对不上就不搬（尺寸换过、串被截断都算）。
   // 步数只在笔迹真的搬过来之后才跟着搬：盘是空的却说「这局走了 12 步」又是另一句谎话。
   if (typeof marks === 'string' && marks.length === edgeCount(p.w, p.h)) game.decode(marks, moves);
+  // 新一局（含续局重建）不带上上一局的提示：那句话讲的是上一张盘的最后一步，挂在这张盘上是假线索。
+  hintNote = null;
+  noteMoves = -1;
   won = false;
   hideVeil();
   // 键盘光标只在真的用键盘之后才出现：一个刚用鼠标点开游戏的玩家不该先看见一圈虚线
@@ -320,6 +384,8 @@ window.addEventListener('keydown', async (ev) => {
     game.undo();
     render();
     persist();
+  } else if (k === 'h' || k === 'H') {
+    hint(); // 与按钮同一条路：点击与键盘按的是同一个函数，落的是同一个 Game 入口
   } else if (k === 'e' || k === 'E') {
     // 三支笔轮着切：画环 → 排除叉 → 擦掉 → 画环
     const order = ['loop', 'cut', 'erase'];
@@ -336,6 +402,7 @@ window.addEventListener('keydown', async (ev) => {
 $('btn-new').addEventListener('click', () => newGame({}));
 $('btn-again').addEventListener('click', () => newGame({}));
 $('btn-close-veil').addEventListener('click', () => hideVeil());
+$('btn-hint').addEventListener('click', () => hint());
 $('btn-undo').addEventListener('click', async () => {
   if (!game) return;
   game.undo();
@@ -389,10 +456,12 @@ window.masyu = {
   version: VERSION,
   state: 'booting',
   engine: {
-    makePuzzle, toView, parseSize, SIZES, verify, createState, solveWithRules, RULE_ORDER, RULE_TEXT,
+    makePuzzle, toView, parseSize, SIZES, verify, createState, solveWithRules, nextDeduction, RULE_ORDER, RULE_TEXT,
     edgeIdOf, edgeCount, neighbor, dirBetween, checkLoop, loopOrder,
     edgeOf, valOf, unknownCount,
     UP, RIGHT, DOWN, LEFT, LOOP, CUT, UNKNOWN, BLACK, WHITE,
+    // 有意不挂 applyDeduction：它是「直接把结论写进边数组」的那条旁路。页面上（以及门禁里）
+    // 落结论只有 Game.setEdgeById 一个入口，于是撤销栈与 moves 不可能被提示绕过。
   },
   view,
   get game() {
@@ -405,6 +474,7 @@ window.masyu = {
     return mode;
   },
   setMode,
+  hint,
   newGame,
   mintSeed,
   checkWin,
