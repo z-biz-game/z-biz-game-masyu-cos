@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "数链 / Masyu — 一条闭环连过所有珠子。round 1 交出的引擎（出题 + 三道 soundness 门）之上，round 2a 加浏览器底盘与画面，以及最小诚实的 headless-Chrome 门禁。round 2 的 UI 预留端口对：HTTP 5276 / CDP 9376。",
+  "description": "数链 / Masyu — 一条闭环连过所有珠子：黑珠两侧都走直线、白珠只拐两格。出货的每一局都由独立计数器数过唯一解，铅笔求解器在零猜测下能推到底；难度只由尺寸与珠数决定（6×6→10×10 全档实测出货）。门禁端口对：HTTP 5276 / CDP 9376。",
   "main": "electron/main.cjs",
   "engines": {
     "node": ">=18"
