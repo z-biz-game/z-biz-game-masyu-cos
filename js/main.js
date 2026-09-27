@@ -11,7 +11,7 @@ import { Palette, Space, applyThemeVars, setReduceMotion } from './theme.js';
 import { Store } from './store.js';
 import { makePuzzle, toView, SIZES, parseSize } from './engine/generate.js';
 import { edgeIdOf, edgeCount, neighbor, dirBetween, checkLoop, loopOrder, UP, RIGHT, DOWN, LEFT, BLACK, WHITE } from './engine/loop.js';
-import { createState, verify, solveWithRules, RULE_ORDER, RULE_TEXT, LOOP, CUT, UNKNOWN } from './engine/pencil.js';
+import { createState, verify, solveWithRules, RULE_ORDER, RULE_TEXT, edgeOf, valOf, unknownCount, LOOP, CUT, UNKNOWN } from './engine/pencil.js';
 import { BoardView } from './render/board.js';
 import { Game } from './ui/game.js';
 
@@ -32,7 +32,10 @@ const verifyLine = $('verify-line');
 
 const view = new BoardView(canvas);
 let game = null;
-let mode = 'loop'; // 'loop' | 'erase'
+// 三支笔，对着引擎的三态：画环=LOOP、排除叉=CUT、擦掉=UNKNOWN。
+// 「排除叉」是一支真的笔，不是「擦掉」的别名：它把一条边写成 CUT，画出来是一个小叉。
+let mode = 'loop'; // 'loop' | 'cut' | 'erase'
+const PEN = { loop: LOOP, cut: CUT, erase: UNKNOWN };
 let drag = null;
 let cursor = -1; // 键盘光标
 let anchor = -1; // 键盘连线锚点
@@ -88,10 +91,12 @@ function paintStats() {
   const bad = game.badCells();
   const ends = game.endpoints();
   const segs = game.loopEdges();
+  const cuts = game.cutEdges();
   $('stat-seed').textContent = `seed ${game.seed}`;
   $('stat-black').textContent = String(p.black);
   $('stat-white').textContent = String(p.white);
   $('stat-segs').textContent = String(segs.length);
+  $('stat-cuts').textContent = String(cuts.length);
   $('stat-ends').textContent = String(ends.length);
   const badEl = $('stat-bad');
   badEl.textContent = String(bad.length);
@@ -111,8 +116,8 @@ function paintStats() {
     stateLine.textContent = bad.length
       ? `${bad.length} 格引出了 3 条以上的环边 —— 那里不可能接成一条环。${v.why || ''}`
       : segs.length === 0
-        ? '拖拽相邻两格连一段环；黑珠那格必须拐，白珠那格必须直穿。'
-        : `已画 ${segs.length} 段，${ends.length} 个没接上的端点。引擎说：${v.why || '成环了'}`;
+        ? '拖拽相邻两格连一段环；右键落在哪条边上就把那条边画成排除叉。黑珠那格必须拐，白珠那格必须直穿。'
+        : `已画 ${segs.length} 段、排除 ${cuts.length} 条，${ends.length} 个没接上的端点。引擎说：${v.why || '成环了'}`;
   }
 }
 
@@ -187,8 +192,11 @@ function persist() {
 }
 
 function setMode(next) {
-  mode = next === 'erase' ? 'erase' : 'loop';
+  // 判「这个笔名认不认」用 in，不用取值真假：擦掉那支笔的 kind 就是 UNKNOWN=0，
+  // 写成 PEN[next] ? next : 'loop' 会把「擦掉」当成没认出来、悄悄退回画环。
+  mode = next in PEN ? next : 'loop';
   $('btn-mode-loop').setAttribute('aria-pressed', String(mode === 'loop'));
+  $('btn-mode-cut').setAttribute('aria-pressed', String(mode === 'cut'));
   $('btn-mode-erase').setAttribute('aria-pressed', String(mode === 'erase'));
   canvas.style.cursor = mode === 'erase' ? 'cell' : 'crosshair';
 }
@@ -196,6 +204,9 @@ function setMode(next) {
 // ── 指针 ────────────────────────────────────────────────────────────────
 // 拖拽走的是「相邻格心」：每一段都问 view 要方向，view 再问 loop.js。
 // 不相邻的两格（甩太快）只会挪锚点，不会凭空长出一条斜边。
+// 左键是**铺笔**：经过的每一条边都写成当前那支笔（loop→LOOP、cut→CUT、erase→UNKNOWN），
+// 一整笔拖拽是一组撤销。右键是**就动指针压着的那一条边**：叉 ↔ 没落笔（LOOP 先变叉），
+// 一次点击一组撤销一步。
 canvas.addEventListener('pointerdown', (ev) => {
   if (!game) return;
   const cell = view.hitCell(ev.clientX, ev.clientY);
@@ -206,12 +217,23 @@ canvas.addEventListener('pointerdown', (ev) => {
   } catch {
     /* 合成事件没有真的 pointerId：下面的 move/up 仍然按 clientX/Y 走同一条路 */
   }
-  const erase = mode === 'erase' || ev.button === 2;
   startClock();
+  if (ev.button === 2) {
+    const hit = view.hitEdge(ev.clientX, ev.clientY);
+    if (hit) game.toggleCut(hit.cell, hit.d); // 不在手势里：setEdge 自己就是一组
+    render();
+    persist();
+    return;
+  }
+  const kind = PEN[mode];
   game.beginGesture();
-  drag = { cells: [cell], erase };
+  drag = { cells: [cell], kind };
   cursor = cell;
-  if (erase) game.eraseAt(cell);
+  if (mode === 'erase') game.eraseAt(cell);
+  else if (mode === 'cut') {
+    const hit = view.hitEdge(ev.clientX, ev.clientY);
+    if (hit) game.setEdge(hit.cell, hit.d, CUT);
+  }
   render();
 });
 
@@ -224,8 +246,7 @@ canvas.addEventListener('pointermove', (ev) => {
   const d = view.dirFromTo(last, cell);
   if (d < 0) return; // 不相邻：只挪笔，不连线
   drag.cells.push(cell);
-  if (drag.erase) game.setEdge(last, d, UNKNOWN);
-  else game.setEdge(last, d, LOOP);
+  game.setEdge(last, d, drag.kind);
   cursor = cell;
   render();
 });
@@ -271,7 +292,12 @@ window.addEventListener('keydown', async (ev) => {
     } else if (anchor !== cursor) {
       const d = view.dirFromTo(anchor, cursor);
       game.beginGesture();
-      if (d >= 0) game.setEdge(anchor, d, mode === 'erase' ? UNKNOWN : LOOP);
+      if (d >= 0) {
+        // 叉那支笔在键盘上是**翻**的：同一条边回车一次画叉、光标挪回来再回车一次擦回没落笔
+        //（左键拖拽那支是铺笔，经过哪条写哪条，不翻转——一次拖拽翻一堆边会把人绕晕）。
+        if (mode === 'cut') game.toggleCut(anchor, d);
+        else game.setEdge(anchor, d, PEN[mode]);
+      }
       game.endGesture();
       anchor = cursor;
       render();
@@ -293,7 +319,10 @@ window.addEventListener('keydown', async (ev) => {
     render();
     persist();
   } else if (k === 'e' || k === 'E') {
-    setMode(mode === 'loop' ? 'erase' : 'loop');
+    // 三支笔轮着切：画环 → 排除叉 → 擦掉 → 画环
+    const order = ['loop', 'cut', 'erase'];
+    setMode(order[(order.indexOf(mode) + 1) % order.length]);
+    srCell.textContent = `画笔：${mode === 'loop' ? '画环' : mode === 'cut' ? '排除叉' : '擦掉'}`;
   } else if (k === 'n' || k === 'N') {
     await newGame({});
     return;
@@ -320,6 +349,7 @@ $('btn-clear').addEventListener('click', () => {
   persist();
 });
 $('btn-mode-loop').addEventListener('click', () => setMode('loop'));
+$('btn-mode-cut').addEventListener('click', () => setMode('cut'));
 $('btn-mode-erase').addEventListener('click', () => setMode('erase'));
 $('btn-motion').addEventListener('click', (ev) => {
   const next = !(ev.currentTarget.getAttribute('aria-pressed') === 'true');
@@ -359,6 +389,7 @@ window.masyu = {
   engine: {
     makePuzzle, toView, parseSize, SIZES, verify, createState, solveWithRules, RULE_ORDER, RULE_TEXT,
     edgeIdOf, edgeCount, neighbor, dirBetween, checkLoop, loopOrder,
+    edgeOf, valOf, unknownCount,
     UP, RIGHT, DOWN, LEFT, LOOP, CUT, UNKNOWN, BLACK, WHITE,
   },
   view,

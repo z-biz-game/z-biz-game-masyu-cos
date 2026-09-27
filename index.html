@@ -38,7 +38,7 @@
 
         <div id="board-wrap">
           <canvas id="board" tabindex="0" role="img"
-            aria-label="数链盘面：拖拽在相邻格心之间连环段，方向键移动光标、回车连线"
+            aria-label="数链盘面：拖拽在相邻格心之间连环段，右键把指针压着的那条边画成排除叉，方向键移动光标、回车从锚点动手"
             aria-describedby="state-line"></canvas>
           <!-- 显式的 hidden 规则：#win-veil 平时是 display:grid，会盖掉 UA 的 [hidden]，
                那等于一块看不见却还在吃点击的 veil。场景量的是它的矩形，不是这个属性。 -->
@@ -55,13 +55,14 @@
           </div>
         </div>
 
-        <p id="state-line" class="state-line" aria-live="polite">拖拽相邻两格连一段环；点已有环段的格子右键可擦。</p>
+        <p id="state-line" class="state-line" aria-live="polite">拖拽相邻两格连一段环；右键落在哪条边上就把那条边画成排除叉。</p>
         <p id="sr-cell" class="sr-only" aria-live="polite"></p>
       </div>
 
       <aside class="panel">
         <div class="modes" role="group" aria-label="画笔">
           <button id="btn-mode-loop" class="ghost mode" type="button" aria-pressed="true">画环</button>
+          <button id="btn-mode-cut" class="ghost mode" type="button" aria-pressed="false">排除叉</button>
           <button id="btn-mode-erase" class="ghost mode" type="button" aria-pressed="false">擦掉</button>
         </div>
 
@@ -75,6 +76,7 @@
           <div class="stat"><span>黑珠</span><b id="stat-black" class="mono">0</b></div>
           <div class="stat"><span>白珠</span><b id="stat-white" class="mono">0</b></div>
           <div class="stat"><span>已画环段</span><b id="stat-segs" class="mono">0</b></div>
+          <div class="stat"><span>已排除</span><b id="stat-cuts" class="mono">0</b></div>
           <div class="stat"><span>未接头</span><b id="stat-ends" class="mono">0</b></div>
           <div class="stat"><span>度数异常</span><b id="stat-bad" class="mono">0</b></div>
           <div class="stat"><span>步数</span><b id="stat-moves" class="mono">0</b></div>
@@ -96,12 +98,13 @@
 
         <div class="legend">
           <span><i class="sw sw-loop"></i>你画的环段</span>
+          <span><i class="sw sw-cut"></i>排除叉（这条边不在环上）</span>
           <span><i class="sw sw-black"></i>黑珠（拐弯）</span>
           <span><i class="sw sw-white"></i>白珠（直穿）</span>
           <span><i class="sw sw-end"></i>还没接上的端点</span>
           <span><i class="sw sw-bad"></i>度数异常（接不通）</span>
         </div>
-        <p class="keyhint"><b>拖拽</b> 连环 · <b>右键</b> 擦这一格 · <b>方向键</b> 移光标 · <b>回车</b> 从锚点连线 · <b>退格</b> 擦光标格 · <b>E</b> 切画笔 · <b>Z</b> 撤销 · <b>N</b> 换一局</p>
+        <p class="keyhint"><b>拖拽</b> 连环 · <b>右键</b> 把指针压着的那条边画成叉（再点一次擦回没落笔） · <b>方向键</b> 移光标 · <b>回车</b> 从锚点动手 · <b>退格</b> 擦光标格 · <b>E</b> 换画笔（画环／排除叉／擦掉） · <b>Z</b> 撤销 · <b>N</b> 换一局</p>
       </aside>
     </section>
   </main>

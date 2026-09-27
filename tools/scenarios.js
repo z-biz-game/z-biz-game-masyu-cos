@@ -47,6 +47,9 @@
   };
   const near = (a, b, tol = 12) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
   const far = (a, b, tol = 40) => a.some((v, i) => Math.abs(v - b[i]) > tol);
+  // 逐通道的最小间距：theme.js 的色组纪律是「和盘底/网格线/环线都拉开至少 25 的**逐通道**距离」，
+  // 那是「每一个通道都 ≥25」，不是「有一个通道 ≥25」——所以这里取 min，不许用 far 蒙。
+  const minChan = (a, b) => Math.min(...a.map((v, i) => Math.abs(v - b[i])));
   const show3 = (a) => `[${a[0]},${a[1]},${a[2]}]`;
 
   // ---- 画布本地坐标取样（CSS 像素 × dpr）------------------------------------
@@ -65,6 +68,24 @@
   function segMid(cell, d) {
     const r = A().view.segRect(cell, d);
     return r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : null;
+  }
+  // 排除叉的取样点：由视图自己报它把叉画在哪（draw 用的就是同一个 markPoint）。
+  // 自己按「两格心中点」再算一遍的话，画法一改这条断言还会在旧位置绿着。
+  function markMid(cell, d) {
+    const m = A().view.markPoint(cell, d);
+    return m ? { x: m.x, y: m.y } : null;
+  }
+  // 一格某一侧的那半张脸：指针落在这一半，命中的就是这一条边（view.hitEdge 的主轴规则）。
+  // 0.26 cell 离格心足够远（|dx|>|dy| 稳定成立），又还在格内。
+  const HALF = 0.26;
+  function halfOf(cell, d) {
+    const r = A().view.cellRect(cell);
+    const k = r.size;
+    const off = k * HALF;
+    if (d === E().RIGHT) return { x: r.cx + off, y: r.cy };
+    if (d === E().LEFT) return { x: r.cx - off, y: r.cy };
+    if (d === E().DOWN) return { x: r.cx, y: r.cy + off };
+    return { x: r.cx, y: r.cy - off };
   }
 
   // ---- 真指针（client 坐标）--------------------------------------------------
@@ -102,6 +123,20 @@
     const z = ptOf(cells[cells.length - 1]);
     pointer('pointerup', z.x, z.y, button);
     await wait(40);
+  }
+  // 右键落在盘面上一个**画布本地**点：真指针事件，坐标换算成 client 再打。
+  async function rightClickAt(lx, ly) {
+    const p = clientOf(lx, ly);
+    pointer('pointerdown', p.x, p.y, 2);
+    await wait(10);
+    pointer('pointerup', p.x, p.y, 2);
+    await wait(40);
+  }
+  // 已经落笔的边数（LOOP + CUT）：提示那一条路每一步都必须让它正好 +1，多一分就是偷看了答案。
+  function decided(g) {
+    let n = 0;
+    for (let e = 0; e < g.st.edges.length; e++) if (g.st.edges[e] !== E().UNKNOWN) n++;
+    return n;
   }
 
   // 把 face.segs（引擎 toView 给的 [r,c,'h'|'v']）翻成 "cell:d" 的模型集
@@ -161,6 +196,19 @@
     const btn = $('#btn-new').getBoundingClientRect();
     const btnUndo = $('#btn-undo').getBoundingClientRect();
     ck('boot: 换一局 / 撤销 两个按钮都有可点的矩形', btn.width > 40 && btn.height > 20 && btnUndo.width > 40 && btnUndo.height > 20, `换一局 ${Math.round(btn.width)}x${Math.round(btn.height)} 撤销 ${Math.round(btnUndo.width)}x${Math.round(btnUndo.height)}`);
+
+    // 指针闸：新增的控件先量命中盒 —— 到不了控件的断言不叫断言，叫愿望。
+    // 而且要比矩形：画布中心被 veil 盖住过一次，就是因为只看 rect 不看「这一下命中的是谁」。
+    const cutBtn = $('#btn-mode-cut');
+    const cr2 = cutBtn.getBoundingClientRect();
+    const hit2 = document.elementFromPoint(Math.round(cr2.left + cr2.width / 2), Math.round(cr2.top + cr2.height / 2));
+    ck(
+      'boot: 「排除叉」按钮有非零命中盒，且中心那一下命中的就是它',
+      cr2.width > 30 && cr2.height > 18 && (hit2 === cutBtn || cutBtn.contains(hit2)),
+      `矩形 ${Math.round(cr2.width)}x${Math.round(cr2.height)} 中心命中 ${hit2 ? hit2.tagName + '#' + hit2.id : 'null'}`
+    );
+    const cutsEl = $('#stat-cuts');
+    ck('boot: 「已排除」读数挂在面板上（三态的第三条有地方报数）', !!cutsEl && /^\d+$/.test(cutsEl.textContent.trim()), cutsEl ? `内容="${cutsEl.textContent}"` : '没有 #stat-cuts');
 
     eq('boot: seed 铭牌写的就是这一局用的原始 seed', text('#stat-seed'), `seed ${A().game.seed}`);
 
@@ -256,6 +304,7 @@
     const pal = P();
     const accent = rgb(pal.accent);
     const field = rgb(pal.field);
+    const cutC = rgb(pal.cutMark);
     const badC = rgb(pal.badRing);
     const model = modelSet(g);
     // R3C3：左、右、下三条边都还在盘内，所以这一格是构造「度数 3」最省事的支点
@@ -292,18 +341,154 @@
       `读数=${text('#stat-bad')} 段数=${g.loopEdges().length} 得到 ${show3(rpx2)}`
     );
 
-    const pp = ptOf(mid);
-    pointer('pointerdown', pp.x, pp.y, 2);
-    await wait(10);
-    pointer('pointerup', pp.x, pp.y, 2);
-    await wait(40);
+    // ── 三态：右键把指针压着的那**一条**边画成叉，再点一次回没落笔，undo 逐层退回去 ──
+    // 这一格现在挂着两条环边：(mid-1)↔mid 和 mid↔(mid+1)。右键落在 mid 的右半边，
+    // 就只有 mid↔(mid+1) 这一条变成叉 —— 左边那条必须还是环，否则「右键=擦整格」的老毛病没修掉。
+    const hpt = halfOf(mid, E().RIGHT);
+    const mv0 = g.moves;
+    const st0 = g.undoStack.length;
+    await rightClickAt(hpt.x, hpt.y);
+    const hp = clientOf(hpt.x, hpt.y);
+    const hit = A().view.hitEdge(hp.x, hp.y);
+    ck(
+      'play: 右键落在 mid 右半边 → hitEdge 交出的正是 (mid, RIGHT) 这一条边（指针闸：命中点寻得到这条边）',
+      !!hit && hit.cell === mid && hit.d === E().RIGHT,
+      JSON.stringify(hit)
+    );
+    eq('play: 右键那一下把这条边写成引擎的 CUT（不是 UNKNOWN）', String(E().valOf(g.st, mid, E().RIGHT)), String(E().CUT));
+    eq('play: 只动一条边：左边那条环边还是 LOOP', String(E().valOf(g.st, mid - 1, E().RIGHT)), String(E().LOOP));
+    eq('play: 画叉也记一步、也进撤销栈（moves 与 undo 组没被旁路）', `${g.moves - mv0}/${g.undoStack.length - st0}`, '1/1');
+    const mk = markMid(mid, E().RIGHT);
+    const mkPx = sample(mk.x, mk.y);
+    ck(
+      'play: 叉画得出来 —— 叉中心像素就是叉色，而且已经不是环线色（不是「什么都不画」）',
+      near(mkPx, cutC) && far(mkPx, accent),
+      `期望 ${show3(cutC)} 得到 ${show3(mkPx)}（环线色 ${show3(accent)}）@${Math.round(mk.x)},${Math.round(mk.y)}`
+    );
+    eq('play: 「已排除」读数跟着涨到 1', text('#stat-cuts'), '1');
+
+    await rightClickAt(hpt.x, hpt.y);
+    const mkPx2 = sample(markMid(mid, E().RIGHT).x, markMid(mid, E().RIGHT).y);
+    ck(
+      'play: 同一条边再右键一次 → 回 UNKNOWN，像素既不是叉也不是环线',
+      E().valOf(g.st, mid, E().RIGHT) === E().UNKNOWN && far(mkPx2, cutC) && far(mkPx2, accent),
+      `状态=${E().valOf(g.st, mid, E().RIGHT)} 得到 ${show3(mkPx2)}`
+    );
+    const mvU = g.moves;
+    g.undo();
+    A().render();
+    await wait(30);
+    ck(
+      'play: 撤销一次 → 退回的是落笔前那个值 CUT（叉），不是「没落笔」：undo 记录里三态没被压平',
+      E().valOf(g.st, mid, E().RIGHT) === E().CUT && g.moves - mvU === 1 && near(sample(markMid(mid, E().RIGHT).x, markMid(mid, E().RIGHT).y), cutC),
+      `状态=${E().valOf(g.st, mid, E().RIGHT)} 步数增量=${g.moves - mvU}`
+    );
+    g.undo();
+    A().render();
+    await wait(30);
+    ck(
+      'play: 再撤销一次 → 退回 LOOP，段中点像素回到环线色（UNKNOWN←CUT←LOOP 一路可逆）',
+      E().valOf(g.st, mid, E().RIGHT) === E().LOOP && g.undoStack.length === st0 && near(sample(segMid(mid, E().RIGHT).x, segMid(mid, E().RIGHT).y), accent),
+      `状态=${E().valOf(g.st, mid, E().RIGHT)} 栈=${g.undoStack.length}/${st0}`
+    );
+
+    // 擦掉这支笔（老右键的活现在归它）：一笔拖过去，环边与叉一起回到没落笔。
+    // 这一步同时把盘面清干净，好让下面两条拖拽断言从「空盘」起步（不然它们量的是上一笔的余数）。
+    A().setMode('erase');
+    await dragPath([mid - 1, mid, mid + 1]);
+    A().setMode('loop');
     const m0 = segMid(mid, E().RIGHT);
     const px0 = sample(m0.x, m0.y);
     ck(
-      'play: 右键擦这一格 → 引擎状态里已无环边，那段中点像素也不再是环线色',
-      g.loopEdges().length === 0 && far(px0, accent),
-      `段数=${g.loopEdges().length} 得到 ${show3(px0)}`
+      'play: 「擦掉」这支笔拖过去 → 环边与叉一起回 UNKNOWN，段中点既不是环线色也不是叉色',
+      g.loopEdges().length === 0 && g.cutEdges().length === 0 && far(px0, accent) && far(px0, cutC),
+      `段数=${g.loopEdges().length} 叉数=${g.cutEdges().length} 得到 ${show3(px0)}`
     );
+    ck('play: 清空之后两个读数一起归零（已画环段 / 已排除）', text('#stat-segs') === '0' && text('#stat-cuts') === '0', `环段=${text('#stat-segs')} 排除=${text('#stat-cuts')}`);
+
+    // 拖拽画环仍然一组撤销（叉上线之后这条也要照样成立）
+    const stL = g.undoStack.length;
+    const mvL = g.moves;
+    await dragPath([mid - 1, mid, mid + 1]);
+    eq('play: 一笔拖过两格 = 两条 LOOP = 一步 = 一组撤销', `${g.loopEdges().length}/${g.moves - mvL}/${g.undoStack.length - stL}`, '2/1/1');
+    g.undo();
+    A().render();
+    await wait(30);
+    eq('play: 一次 undo 退掉整笔环（回到空盘，一条都不剩）', `${g.loopEdges().length}/${g.cutEdges().length}`, '0/0');
+
+    // 排除叉那支笔拖一笔：经过的两条边一起变叉，仍然是一组撤销
+    A().setMode('cut');
+    eq('play: 「排除叉」是一支真的笔（模式切得过去，aria-pressed 跟着走）', document.querySelector('#btn-mode-cut').getAttribute('aria-pressed'), 'true');
+    eq('play: 切模式本身不落笔（切一下盘面还是零条叉）', String(g.cutEdges().length), '0');
+    const stC = g.undoStack.length;
+    const mvC = g.moves;
+    await dragPath([mid - 1, mid, mid + 1]);
+    eq('play: 叉笔一笔拖过两条边 → 引擎里正好两条 CUT', String(g.cutEdges().length), '2');
+    eq('play: 一笔叉 = 一步 = 一组撤销', `${g.moves - mvC}/${g.undoStack.length - stC}`, '1/1');
+    eq('play: 叉笔那一笔之后「已排除」读数就是 2', text('#stat-cuts'), '2');
+    g.undo();
+    A().setMode('loop');
+    A().render();
+    await wait(30);
+    eq('play: 一次 undo 退掉整笔叉（两条一起回到没落笔，不留一地没人认领的叉）', `${g.cutEdges().length}/${g.loopEdges().length}`, '0/0');
+
+    // 全清也得是三态的：只扫 LOOP 会留一地没人认领的叉。先量命中盒，再真点下去。
+    await rightClickAt(hpt.x, hpt.y);
+    await dragPath([mid - 1, mid]);
+    eq('play: 全清之前盘上确实同时有环与叉（不然这条清的是空气）', `${g.loopEdges().length}/${g.cutEdges().length}`, '1/1');
+    const clr = document.querySelector('#btn-clear');
+    const clrRect = clr.getBoundingClientRect();
+    const clrHit = document.elementFromPoint(Math.round(clrRect.left + clrRect.width / 2), Math.round(clrRect.top + clrRect.height / 2));
+    ck('play: 「全清」按钮的命中盒到得了它自己', clrRect.width > 30 && clrRect.height > 18 && (clrHit === clr || clr.contains(clrHit)), `矩形 ${Math.round(clrRect.width)}x${Math.round(clrRect.height)} 命中 ${clrHit ? clrHit.tagName + '#' + clrHit.id : 'null'}`);
+    clr.click();
+    await wait(40);
+    ck(
+      'play: 「全清」扫的是三态（环边与叉一起回到没落笔，两个读数一起归零）',
+      g.loopEdges().length === 0 && g.cutEdges().length === 0 && text('#stat-segs') === '0' && text('#stat-cuts') === '0',
+      `环段=${g.loopEdges().length}/${text('#stat-segs')} 叉=${g.cutEdges().length}/${text('#stat-cuts')}`
+    );
+
+    // 叉不许压住珠子：珠子画在第 6 步、在叉之上，而且叉沿轴只伸到离格心 0.39 cell 之外
+    let pearlCell = -1;
+    let pearlDir = E().RIGHT;
+    for (let r = 0; r < g.h && pearlCell < 0; r++) {
+      for (let c = 0; c < g.w; c++) {
+        if (!g.face.pearls[r][c]) continue;
+        const cell = r * g.w + c;
+        for (const d of [E().RIGHT, E().DOWN, E().LEFT, E().UP]) {
+          if (E().neighbor(g.w, g.h, cell, d) >= 0) {
+            pearlCell = cell;
+            pearlDir = d;
+            break;
+          }
+        }
+        if (pearlCell >= 0) break;
+      }
+    }
+    if (pearlCell < 0) {
+      ck('play: 题面里找得到一颗带邻格的珠子（不然「叉不遮珠」这条没法证）', false, '没有珠子能补叉');
+    } else {
+      const kindWant = g.face.pearls[Math.floor(pearlCell / g.w)][pearlCell % g.w];
+      const cuts0 = g.cutEdges().length;
+      const hpp = halfOf(pearlCell, pearlDir);
+      await rightClickAt(hpp.x, hpp.y);
+      const pPx = sample(cellMid(pearlCell).x, cellMid(pearlCell).y);
+      const wantP = rgb(kindWant === 'black' ? pal.pearlBlack : pal.pearlWhite);
+      ck(
+        `play: 给长着${kindWant === 'black' ? '黑' : '白'}珠的那格补一个叉 → 珠心像素还是那颗珠子（叉不遮珠）`,
+        E().valOf(g.st, pearlCell, pearlDir) === E().CUT && g.cutEdges().length === cuts0 + 1 && near(pPx, wantP),
+        `状态=${E().valOf(g.st, pearlCell, pearlDir)} 叉数=${g.cutEdges().length}/${cuts0} 珠心 ${show3(pPx)} 想要 ${show3(wantP)}`
+      );
+      ck(
+        'play: 叉色与黑珠/白珠/盘底/网格线/环线**逐通道**都拉开 ≥25（三态各自可读，谁也冒充不了谁）',
+        [pal.pearlBlack, pal.pearlWhite, pal.field, pal.gridLine, pal.accent].every((k) => minChan(cutC, rgb(k)) >= 25),
+        `叉 ${show3(cutC)} 逐通道最小间距：黑 ${minChan(cutC, rgb(pal.pearlBlack))} 白 ${minChan(cutC, rgb(pal.pearlWhite))} 盘底 ${minChan(cutC, rgb(pal.field))} 网格 ${minChan(cutC, rgb(pal.gridLine))} 环线 ${minChan(cutC, accent)}`
+      );
+      g.undo();
+      A().render();
+      await wait(30);
+      eq('play: 珠子上那个叉撤得掉（撤完叉数回到画它之前那个数）', String(g.cutEdges().length), String(cuts0));
+    }
 
     // 沿参考环走一整圈：相邻格一笔画（loopOrder 给的就是一条相邻连通的圈），
     // 这是玩家按得出来的最长一次拖拽，不是往引擎里灌答案。

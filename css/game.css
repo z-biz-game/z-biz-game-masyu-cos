@@ -260,6 +260,15 @@ select {
 .legend span { display: flex; align-items: center; gap: 8px; }
 .sw { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line-heavy); flex: none; }
 .sw-loop { background: var(--accent); border-color: var(--accent); }
+/* 排除叉：色来自 js/theme.js 的 Palette.cutMark，经 applyThemeVars() 落成 --cut-mark。
+   方块里画一个叉（不是纯色块），因为「叉」是形状，图例就该给形状。 */
+.sw-cut {
+  background:
+    linear-gradient(45deg, transparent calc(50% - 1.5px), var(--cut-mark) calc(50% - 1.5px) calc(50% + 1.5px), transparent calc(50% + 1.5px)),
+    linear-gradient(-45deg, transparent calc(50% - 1.5px), var(--cut-mark) calc(50% - 1.5px) calc(50% + 1.5px), transparent calc(50% + 1.5px)),
+    var(--field);
+  border-color: var(--cut-mark);
+}
 .sw-black { background: var(--pearl-black); border-color: var(--pearl-ring); border-radius: 50%; }
 .sw-white { background: var(--pearl-white); border-color: var(--pearl-ring-dark); border-radius: 50%; }
 .sw-end { background: var(--cap-dot); border-color: var(--cap-dot); border-radius: 50%; }

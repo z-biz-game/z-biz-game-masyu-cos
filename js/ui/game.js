@@ -6,7 +6,7 @@
 // 拿，本文件不重算任何索引几何——重算一次就多一个「画对了但点偏一格」的来源。
 
 import { createState, verify, edgeOf, valOf, loopDirs, LOOP, CUT, UNKNOWN } from '../engine/pencil.js';
-import { dirBetween, UP, RIGHT, DOWN, LEFT } from '../engine/loop.js';
+import { dirBetween, neighbor, UP, RIGHT, DOWN, LEFT } from '../engine/loop.js';
 import { toView } from '../engine/generate.js';
 
 export const DIRS = [UP, RIGHT, DOWN, LEFT];
@@ -42,9 +42,10 @@ export class Game {
     return r >= 0 && c >= 0 && r < this.h && c < this.w;
   }
 
-  // 玩家落笔的唯一入口：kind 只有 LOOP（画环）和 UNKNOWN（擦掉）两种，本 round 不做排除叉。
-  // 撤销记录也在这里长出来：开着一次手势（beginGesture 到 endGesture）就并进同一组，一次 undo
-  // 退一整笔拖拽；没开手势的散点（键盘、右键擦）自己就是一组。
+  // 玩家落笔的唯一入口：kind 就是引擎的三态 —— LOOP（画环）、CUT（排除叉）、UNKNOWN（擦回没落笔）。
+  // 三条路（拖拽、右键、键盘）与提示都从这里过，所以撤销栈和 moves 记的就是玩家干的活，
+  // 谁也没有旁路：不在手势里 = 自己就是一组（散点、右键那一下、提示的一条结论），
+  // 在手势里 = 并进这一次 beginGesture 到 endGesture 的一组（一整笔拖拽一次撤销退完）。
   setEdge(cell, d, kind) {
     const e = edgeOf(this.st, cell, d);
     if (e < 0) return null; // 那里根本没有边（出盘了）
@@ -58,6 +59,26 @@ export class Game {
       this.moves++;
     }
     return rec;
+  }
+
+  // 一条边在「叉」和「没落笔」之间来回：右键那一下走的就是这里。
+  // LOOP 时也一步变成叉 —— 那是「这条我原先画错了，现在排除」，撤销照旧能退回环边；
+  // 已经是叉再点一次才回到 UNKNOWN。两步都在 setEdge 的账上，不另开记分板。
+  toggleCut(cell, d) {
+    const e = edgeOf(this.st, cell, d);
+    if (e < 0) return null;
+    return this.setEdge(cell, d, this.st.edges[e] === CUT ? UNKNOWN : CUT);
+  }
+
+  // 只有边号、没有 (格, 方向) 的调用方（引擎给的一条结论）走的公开入口。
+  // 边号→两端的格子取自引擎自己预计算的 st.edgeCells，方向取自 loop.js 的 dirBetween，
+  // 然后再走 setEdge：提示落一笔和玩家拖一笔在撤销栈、moves、渲染上是同一条路。
+  setEdgeById(edge, kind) {
+    const pair = this.st.edgeCells[edge];
+    if (!pair) return null;
+    const d = dirBetween(this.w, pair[0], pair[1]);
+    if (neighbor(this.w, this.h, pair[0], d) !== pair[1]) return null; // 引擎给的两端不相邻：宁可不写也不写错格
+    return this.setEdge(pair[0], d, kind);
   }
 
   // 一次拖拽 = 一个撤销组。
@@ -74,7 +95,8 @@ export class Game {
     return true;
   }
 
-  // 擦掉一格引出的全部环边（右键 / 键盘退格走的都是这条）。
+  // 擦掉一格引出的全部边（环边和叉都算，一律回到 UNKNOWN）：「擦掉」这一笔和键盘退格走的是这条。
+  // 右键不在这里——右键是「就动指针压着的那一条边」，见 toggleCut。
   eraseAt(cell) {
     let touched = 0;
     for (const d of DIRS) if (this.setEdge(cell, d, UNKNOWN)) touched++;
@@ -84,15 +106,21 @@ export class Game {
   undo() {
     const g = this.undoStack.pop();
     if (!g) return false;
+    // 逐条退回落笔前的那个值：三态里的哪一种都照原样退（环退回环、叉退回叉），
+    // 不存在「撤销把叉变成没落笔」这种偷偷的第二义。
     for (let i = g.length - 1; i >= 0; i--) this.st.edges[g[i].e] = g[i].prev;
     this.moves++;
     return true;
   }
 
+  // 「全清」= 盘上一点笔迹都不留：环边和叉都在清扫范围内（只扫 LOOP 会留一地没人认领的叉）。
   clearAll() {
     const pairs = [];
     for (let cell = 0; cell < this.w * this.h; cell++) {
-      for (const d of [RIGHT, DOWN]) if (valOf(this.st, cell, d) === LOOP) pairs.push([cell, d]);
+      for (const d of [RIGHT, DOWN]) {
+        const v = valOf(this.st, cell, d);
+        if (v === LOOP || v === CUT) pairs.push([cell, d]);
+      }
     }
     for (const [cell, d] of pairs) this.st.edges[edgeOf(this.st, cell, d)] = UNKNOWN;
     this.moves++;
@@ -129,8 +157,24 @@ export class Game {
     return out;
   }
 
+  // 玩家（或提示）排除掉的边。和 loopEdges 一样只是数一数，给状态行和门禁读；胜负与它无关。
+  cutEdges() {
+    const out = [];
+    for (let cell = 0; cell < this.w * this.h; cell++) {
+      for (const d of [RIGHT, DOWN]) {
+        const e = edgeOf(this.st, cell, d);
+        if (e >= 0 && this.st.edges[e] === CUT) out.push(e);
+      }
+    }
+    return out;
+  }
+
   // 唯一的判胜入口。玩家只画了环边，没画的地方就是「不在环上」，所以这里把剩下的补成 CUT
   // 再交给引擎复核——判定本身一个字都没写在这里。
+  //
+  // 玩家自己标的叉在这里**不需要**被特殊对待：它和补出来的 CUT 是同一种东西（这条边不在环上），
+  // 不是第三种状态。所以「玩家多画一个叉」绝不可能改变这里的结论，也就绝不可能在 UI 侧
+  // 偷偷长出一块第二记分板。
   status() {
     const probe = createState({ w: this.w, h: this.h, pearls: this.st.pearls });
     probe.edges.fill(CUT);
@@ -152,11 +196,16 @@ export class Game {
   }
 
   // 键盘/无障碍读数：这一格现在什么样，全部来自引擎的 valOf/loopDirs。
+  // 排除叉也得念出来——玩家能用键盘画它，只听「环边 0 条：无」是不够的。
   cellReport(cell) {
     const [r, c] = this.cellRC(cell);
     const dirs = loopDirs(this.st, cell).map((d) => DIR_NAME[d]);
+    const cuts = [];
+    for (const d of DIRS) if (valOf(this.st, cell, d) === CUT) cuts.push(DIR_NAME[d]);
     const p = this.face.pearls[r][c];
-    return `第 ${r + 1} 行第 ${c + 1} 列${p ? `（${p === 'black' ? '黑珠' : '白珠'}）` : ''}，环边 ${dirs.length} 条：${dirs.join('、') || '无'}`;
+    return `第 ${r + 1} 行第 ${c + 1} 列${p ? `（${p === 'black' ? '黑珠' : '白珠'}）` : ''}，环边 ${dirs.length} 条：${dirs.join('、') || '无'}${
+      cuts.length ? `，已排除 ${cuts.length} 条：${cuts.join('、')}` : ''
+    }`;
   }
 }
 

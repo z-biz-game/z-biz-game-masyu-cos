@@ -45,6 +45,12 @@ export const Palette = {
   badRing: '#FF5C7A',
   // 环的端点（度数 1）：还没连上的那一头，用冷白点一下，免得被当成已经闭合。
   capDot: '#7BB8FF',
+  // 排除叉（引擎三态里的 CUT）：这条边**不在环上**。它是玩家的第二支笔，所以既不能读成
+  // 「什么都没画」（那是 UNKNOWN #1C2740 的盘底），也不能读成环（那是 accent）。
+  // 逐通道实测：与盘底 102/113/132、与网格线 116/132/160、与环线 125/48/104，每一对都 ≥25。
+  // 与端点冷白 capDot 相距 7/32/59（靠蓝道拉开），但两者画在不同点上（叉在边中点、端点在格心），
+  // 场景是按位置取样的，不会互相冒充。
+  cutMark: '#8298C4',
 };
 
 export const Space = { page: 20, card: 16, inner: 12, gutter: 10 };
@@ -74,6 +80,12 @@ export const Board = {
   pearlR: 0.29,
   ringWidth: 0.11,
   badRingWidth: 0.085,
+  // 排除叉也是几何令牌（同上：draw 和门禁取样必须读同一批数）。arm 是半臂长、width 是线宽，
+  // 都按 cell 的分数算。沿轴方向叉最多伸到 arm/√2 + width/2 ≈ 0.109 cell，离边中点两端的
+  // 格心还有 0.391 cell，而珠子外沿只到 0.29 + ringWidth/2 ≈ 0.345 cell —— 差 0.046 cell，
+  // 所以叉永远不会压在珠子上（而且珠子画在第 6 步，在叉之上）。
+  cutArm: 0.115,
+  cutWidth: 0.075,
 };
 
 export function applyThemeVars() {
