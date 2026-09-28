@@ -39,7 +39,7 @@ jobs:
       - name: Pencil solver (推错了必须为 0)
         run: node tools/pencil-test.mjs
 
-      - name: Counter vs naive cross-check (16 组 DP 对照)
+      - name: Counter vs naive cross-check (五节：① 14 个题面逐个对账，朴素枚举当裁判)
         run: node tools/counter-test.mjs
 
       - name: Generator actually ships
