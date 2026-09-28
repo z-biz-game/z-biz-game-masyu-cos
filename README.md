@@ -157,4 +157,4 @@ SAMPLES=6 node tools/balance.mjs --dose=6x6#2    → RESULT ok=false，红线 4 
 
 ## 许可
 
-MIT。规则文字来自 Masyu（Nikoli 公开规则名），实现、引擎、文档全在本仓自己写。
+MIT。见 `LICENSE`。规则文字来自 Masyu（Nikoli 公开规则名），实现、引擎、文档全在本仓自己写。
