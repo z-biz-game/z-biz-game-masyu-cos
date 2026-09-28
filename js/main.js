@@ -209,7 +209,7 @@ async function generate(seed, sizeKey) {
   $('btn-new').disabled = true;
   $('btn-new').textContent = '生成中…';
   stateLine.className = 'state-line';
-  stateLine.textContent = '正在出题：铅笔要零猜测推得完、计数器要说唯一——两道门都过了才发给你。';
+  stateLine.textContent = '正在出题：铅笔要零猜测推得完、计数器要说唯一、每颗珠子要证过删不得——三道门都过了才发给你。';
   // 生成器是同步的（6x6 实测几百毫秒），让出一帧好让「生成中」真的看得见
   await new Promise((r) => setTimeout(r, 0));
   const p = makePuzzle(seed, sizeKey, { requireBothColors: false });
@@ -219,7 +219,7 @@ async function generate(seed, sizeKey) {
   return p;
 }
 
-async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFAULT_SIZE, marks = null, moves = 0, elapsedMs = 0 } = {}) {
+async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFAULT_SIZE, marks = null, moves = 0, elapsedMs = 0, resumeFrom = null } = {}) {
   const p = await generate(seed, sizeKey);
   if (!p.ok) {
     stateLine.className = 'state-line bad';
@@ -227,9 +227,14 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
     return null;
   }
   game = new Game(p);
+  // 续局的判据不是「有没有这份存档」，而是「存档里那张盘和现在重画出来的是不是同一张」：
+  // 存档存的正是 seed（js/store.js 头部），生成器一改版（本轮加的挖珠门 2）seed→题面 就换人，
+  // 旧笔迹贴上去就是让玩家在自己没玩过的盘上续命。Store.resume(指纹) 对不上会返回 null 并作废存档。
+  const resume = resumeFrom ? Store.resume(p.fingerprint) : null;
+  const carry = resume ? { marks: resume.marks, moves: resume.moves, elapsedMs: resume.elapsedMs } : { marks, moves, elapsedMs };
   // 存档的字符串长度必须正好对上这张盘的边数——对不上就不搬（尺寸换过、串被截断都算）。
   // 步数只在笔迹真的搬过来之后才跟着搬：盘是空的却说「这局走了 12 步」又是另一句谎话。
-  if (typeof marks === 'string' && marks.length === edgeCount(p.w, p.h)) game.decode(marks, moves);
+  if (typeof carry.marks === 'string' && carry.marks.length === edgeCount(p.w, p.h)) game.decode(carry.marks, carry.moves);
   // 新一局（含续局重建）不带上上一局的提示：那句话讲的是上一张盘的最后一步，挂在这张盘上是假线索。
   hintNote = null;
   noteMoves = -1;
@@ -238,11 +243,17 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
   // 键盘光标只在真的用键盘之后才出现：一个刚用鼠标点开游戏的玩家不该先看见一圈虚线
   cursor = -1;
   anchor = -1;
-  baseElapsed = elapsedMs || 0;
+  baseElapsed = carry.elapsedMs || 0;
   startedAt = Date.now();
   relayout();
   render();
   persist();
+  // 作废的那份存档要当着玩家说清楚：这一局是新的，不是他那一局（原因是生成器改版重算了题面）。
+  // 写在 persist() 之后，因为 persist 已经把这张新盘存下去了，玩家下一次刷新就是正常续局。
+  if (resumeFrom && !resume) {
+    stateLine.className = 'state-line hint';
+    stateLine.textContent = '这一局的存档与现在重画出来的题面对不上（存档存的是 seed，出题器改版后同一个 seed 是另一张盘）：旧笔迹没有搬过来，这一局重新开始。';
+  }
   return game;
 }
 
@@ -489,13 +500,13 @@ window.masyu = {
 // ── 启动 ────────────────────────────────────────────────────────────────
 (async function boot() {
   setMode('loop');
-  const r = Store.resume();
+  // 先只看"有没有一份形状正确的存档"，笔迹/步数不在这里搬：newGame 要用存档里的 seed 重画出盘，
+  // 再拿那张盘的真实指纹向 Store.resume(指纹) 对一次账（对不上就作废存档、开新局并说给玩家听）。
+  // 续局要把存下的步数一并交回去：只搬笔迹不搬步数，画面就会显示「0 步」，
+  // 而盘上明明已经画了十几段——这两个数都由 newGame 从存档里自己取，不在这里转手。
+  const pending = Store.pendingResume();
   let started = null;
-  if (r) {
-    // 续局要把存下的步数一并交回去：只搬笔迹不搬步数，画面就会显示「0 步」，
-    // 而盘上明明已经画了十几段。moves 是存档里就有的字段，不是这里现编的数字。
-    started = await newGame({ seed: r.seed, sizeKey: r.sizeKey, marks: r.marks, moves: r.moves, elapsedMs: r.elapsedMs });
-  }
+  if (pending) started = await newGame({ seed: pending.seed, sizeKey: pending.sizeKey, resumeFrom: pending });
   if (!started) await newGame({});
   window.masyu.state = 'ready';
 })();

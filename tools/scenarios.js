@@ -745,6 +745,26 @@
       threw ? `抛了 ${threw}` : `环=${gOld && gOld.loopEdges().length} 叉=${gOld && gOld.cutEdges().length} 步数=${gOld && gOld.moves}/${text('#stat-moves')}`
     );
 
+    // 版本护栏在浏览器这一侧也要走一遍：存档存的是原始 seed，生成器一改版（本轮的门 2）同一个 seed
+    // 就重画出另一张盘。指纹对不上时旧笔迹一颗都不许搬过来——搬了就是让玩家在自己没玩过的盘上续命，
+    // 而且这句话必须当着玩家说，不是悄悄吃掉。这里用「另一张盘的指纹」冒充旧版生成器画的盘。
+    const foreign = A().engine.makePuzzle('gate-fp-foreign', want.sizeKey, { requireBothColors: false });
+    A().store.data.resume = {
+      seed: want.seed, sizeKey: want.sizeKey, marks: want.marks, moves: want.moves, elapsedMs: 0, fingerprint: foreign.fingerprint,
+    };
+    A().store.save();
+    const gFresh = await A().newGame({ seed: want.seed, sizeKey: want.sizeKey, resumeFrom: A().store.data.resume });
+    await wait(60);
+    const emptyMarks = /^0+$/.test(gFresh ? gFresh.encode() : 'x');
+    ck(
+      'resume: 指纹对不上 ⇒ 旧笔迹一颗都不搬（同 seed 的当下那张盘、空笔迹、0 步、读数跟着归零）',
+      !!gFresh && foreign.fingerprint !== gFresh.puzzle.fingerprint && gFresh.puzzle.fingerprint === want.fp && emptyMarks && gFresh.moves === 0 && text('#stat-moves') === '0',
+      `指纹 ${foreign.fingerprint} vs ${gFresh && gFresh.puzzle.fingerprint} 笔迹全 0=${emptyMarks} 步数=${gFresh && gFresh.moves}/${text('#stat-moves')}`
+    );
+    ck('resume: 对不上时当着玩家说清「这一局重新开始」（不是悄悄吃掉存档）', text('#state-line').includes('对不上'), `状态行="${text('#state-line')}"`);
+    ck('resume: 拒收的原因留在 resumeDiscarded 里（排障看得见是哪种不一致）', !!A().store.resumeDiscarded && A().store.resumeDiscarded.why === '指纹不一致', JSON.stringify(A().store.resumeDiscarded));
+    ck('resume: 那份废存档就地换成了诚实的一份（写的是当下这张盘的指纹，下次刷新正常续）', !!A().store.data.resume && A().store.data.resume.fingerprint === gFresh.puzzle.fingerprint && A().store.resume(gFresh.puzzle.fingerprint) !== null, JSON.stringify(A().store.data.resume));
+
     // 收干净：这两个键都是这一场自己造的，留着下一次跑的场景就会读到上一局的盘。
     localStorage.removeItem(GATE_KEY);
     A().store.clearResume();

@@ -36,6 +36,8 @@ function load() {
 
 export const Store = {
   data: load(),
+  // 指纹对账失败时 resume() 把原因写在这里（内存里，不进 localStorage），认账时就清掉。
+  resumeDiscarded: null,
 
   save() {
     try {
@@ -68,10 +70,36 @@ export const Store = {
     this.save();
   },
 
-  resume() {
+  // 「同一个 seed 重建出同一张盘」这句话只在**同一版生成器**里成立：生成器一改（本轮就是挖珠
+  // 加了门 2），同一个 seed 就是另一张盘，把旧笔迹贴上去等于让玩家在一盘自己从没玩过的题面上续命。
+  // 所以 saveResume 写下的 fingerprint 在这里读回来对账：
+  //   传了 freshFingerprint 且与存档里那条不一致（或存档里压根没有指纹）⇒ 这份存档就地作废、
+  //   返回 null，并把作废的原因留在 resumeDiscarded 里给 UI 说给玩家听——绝不让它留着反复骗人。
+  //   不传参数就是「只看形状、不对账」（排障与门禁读档用），出货路径必须传。
+  resume(freshFingerprint = null) {
     const r = this.data.resume;
     if (!r || typeof r.marks !== 'string' || !r.seed) return null;
+    if (freshFingerprint === null) return r;
+    if (typeof r.fingerprint !== 'string' || r.fingerprint !== freshFingerprint) {
+      this.resumeDiscarded = {
+        why: typeof r.fingerprint !== 'string' ? '存档里没有指纹' : '指纹不一致',
+        seed: r.seed,
+        sizeKey: r.sizeKey,
+        saved: r.fingerprint || null,
+        fresh: freshFingerprint,
+        moves: r.moves,
+      };
+      this.data.resume = null;
+      this.save();
+      return null;
+    }
+    this.resumeDiscarded = null; // 认账了：上一次的作废原因不许再挂着
     return r;
+  },
+
+  // 只校验形状、不做指纹对账的读档：boot 用它决定「这一局要不要拿存档里的 seed 重画」。
+  pendingResume() {
+    return this.resume();
   },
 
   clearResume() {

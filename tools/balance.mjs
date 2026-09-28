@@ -17,29 +17,34 @@
 //   SAMPLES=24 node tools/balance.mjs            正式跑（默认 SAMPLES=24）
 //   node tools/balance.mjs --quiet               只打一行 RESULT ok=<true|false>（门禁用）
 //   node tools/balance.mjs --dose=6x6#2          摘掉那一盘的一颗珠子，验 proven 闸还咬不咬（必红）
+//   node tools/balance.mjs --dose=minimal        把引擎的门 2 关掉（生成器退回"预算逼着把珠子放回"），
+//                                                验 minimal 这条新红线咬不咬（必红，且指名哪几盘）
 // 退出码：0 = 全绿；1 = 有红线（见文末 GATES）。
 //
 // 本文件只读 js/ 下的公开出口，不改引擎、不碰浏览器、不联网。
 
 import { makePuzzle, SIZES, SIZE_TABLE } from '../js/engine/generate.js';
-import { solveWithRules, verify, edgeCount, RULE_ORDER, RULE_TEXT } from '../js/engine/pencil.js';
+import { solveWithRules, verify, edgeCount, RULE_ORDER, RULE_TEXT, LOOP as P_LOOP, CUT as P_CUT } from '../js/engine/pencil.js';
 import { countLoops } from '../js/engine/counter.js';
 import { loadavg, cpus } from 'node:os';
 
 const QUIET = process.argv.includes('--quiet');
 const SAMPLES = Math.max(1, Number(process.env.SAMPLES) || 24);
-const BUDGET = 400_000; // 与 js/engine/generate.js:93 的 opts.budget 默认值一致（出货配置）
-const MAX_TRIALS = 40; // 与 js/engine/generate.js:94 一致
+const BUDGET = 400_000; // 与 js/engine/generate.js:96 的 opts.budget 默认值一致（出货配置）
+const MAX_TRIALS = 40; // 与 js/engine/generate.js:97 一致
 
 // 变异剂量 --dose=<sizeKey>#<i>：把指定那一盘的一颗珠子摘掉，专门用来证明 proven 那条红线还咬得住。
 // 需要它的原因：这条闸现在绿着，而"绿着"不等于"拦得住"——本组织 bake 那次就是绿的闸写着错的期望。
-// 摘珠子破的是挖珠不变式（generate.js:153-189：每颗留下的珠子都试过摘，摘了就不认账），所以复算
+// 摘珠子破的是挖珠不变式（generate.js:203-241：每颗留下的珠子都试过摘，摘了就不认账），所以复算
 // 必须当场报出 非 UNIQUE / verify 不过 / 铅笔没推到底 中的至少一个。摘了还全绿 ⇒ 是闸坏了，不是盘没事。
+// 第二种剂量 --dose=minimal 破的不是某一张盘，而是**门 2 本身**：它把 strictMinimal 关掉，于是
+// 生成器退回"计数器超预算就把那颗珠子放回去"，出货盘上就会出现没有证据的珠子。minimal 红线必须红。
+const DOSE_ARG = process.argv.find((s) => s.startsWith('--dose=')) || null;
+const DOSE_NO_STRICT = DOSE_ARG === '--dose=minimal';
 const DOSE = (() => {
-  const a = process.argv.find((s) => s.startsWith('--dose='));
-  if (!a) return null;
-  const m = /^--dose=([0-9]+x[0-9]+)#([0-9]+)$/.exec(a);
-  if (!m) throw new Error(`--dose 的形状是 --dose=6x6#2，收到 ${a}`);
+  if (!DOSE_ARG || DOSE_NO_STRICT) return null;
+  const m = /^--dose=([0-9]+x[0-9]+)#([0-9]+)$/.exec(DOSE_ARG);
+  if (!m) throw new Error(`--dose 的形状是 --dose=6x6#2 或 --dose=minimal，收到 ${DOSE_ARG}`);
   return { sizeKey: m[1], i: Number(m[2]) };
 })();
 
@@ -53,9 +58,10 @@ const CELLS = (k) => {
 // 升序按格子数排（单调性要看"越大越难"成不成立）；比较器只读常量表，不抽随机数。
 const LADDER = [...SIZES, ...EXTRA_SIZES].sort((a, b) => CELLS(a) - CELLS(b) || (a < b ? -1 : a > b ? 1 : 0));
 
-// 出货配置照抄 js/main.js:215（requireBothColors: false、budget/maxTrials 用默认值）：
+// 出货配置照抄 js/main.js:215（requireBothColors: false、budget/maxTrials/strictMinimal 用默认值）：
 // 量出来的难度必须是玩家真拿到的那一盘，不是测试里那份"黑白各留一颗"的变体。
-const SHIP_OPTS = { requireBothColors: false, budget: BUDGET, maxTrials: MAX_TRIALS };
+// --dose=minimal 是唯一会改这份配置的地方：它把门 2 关掉，专门用来证明 minimal 那条红线会红。
+const SHIP_OPTS = { requireBothColors: false, budget: BUDGET, maxTrials: MAX_TRIALS, strictMinimal: !DOSE_NO_STRICT };
 
 // ── balance 自己的难度分数（**引擎里没有 scoreOf，这不是引擎给的数**）────────────
 // 唯一的证据源是 solveWithRules 从空盘推到唯一解的十条规则命中：steps 是总步数，
@@ -94,6 +100,8 @@ const asc = (a) => a.slice().sort((x, y) => x - y); // 数值序，比较器只�
 const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : '-');
 const f0 = (x) => (Number.isFinite(x) ? String(Math.round(x)) : '-');
 const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(0)}%` : '-');
+const idsOf = (a) => (a.length ? a.map((r) => `#${r.i}`).join(',') : '-'); // 破口必须指名到样本，聚合数会藏货
+const NCPU = cpus().length; // 核数：load average 不除以核数就没有意义
 
 // ── 跑一批样本：串可复现，随机只在"选 seed"这一步，而选 seed 是确定性的 ──────────
 function runSize(sizeKey, n) {
@@ -144,10 +152,63 @@ function runSize(sizeKey, n) {
       rec.dropKept = p.stats.dropKept;
       // 退化样本判据：环占满全盘（"整盘一块"那次事故的形状）或一颗珠都没挖掉。
       rec.degenerate = p.loopLength === p.w * p.h || p.stats.dropKept === 0;
+      // 门 2 的独立复算：端出去这一盘，逐颗重摘一遍（不吃引擎的中间结果，也不信它的账）。
+      rec.rejectedByMinimal = p.stats.rejectedByMinimal; // 这一盘抽废了几条环（盘级，只算重试代价）
+      rec.minimality = p.minimality; // 引擎自己那一本珠级账（出货那条环的）
+      rec.audit = auditMinimality(face, p.solution);
+      rec.accounts = beadAndBoardAccounts(p); // 三本账轧不轧平（引擎自己说自己是骗人的）
     }
     out.push(rec);
   }
   return out;
+}
+
+// 「每颗珠子都删不得」这句承诺的真身：在**最终盘面**上一颗一颗重摘。
+// 每颗珠子只有三种结论，前两种各有证据，第三种是"没证据"：
+//   摘得掉（铅笔零猜测推得完 ∧ verify 过 ∧ 计数器预算内 UNIQUE ∧ 定的就是参考环）⇒ 这颗不必要 ⇒ 破口
+//   摘不掉（推不完 / verify 不过 / MULTIPLE / NONE）                        ⇒ 这颗证过删不得
+//   数不完（OVERBUDGET）                                                    ⇒ 既没证必要也没证可删 ⇒ 破口
+// 它比引擎当时的判据更强一档：引擎是在"挖到一半的盘"上试这颗珠子，这里是在最终盘面上试。
+// 代价实测很小（10×10 约 10ms/盘）：绝大多数珠子一摘铅笔就推不完，计数器根本不会被问到。
+// 这一段在墙钟计时区之外，所以它不改 msTotal/wall 的口径，只花本工具自己的时间。
+function auditMinimality(face, refEdges) {
+  const r = { beads: 0, deletable: [], noEvidence: [], mismatch: 0 };
+  for (let c = 0; c < face.pearls.length; c++) {
+    if (!face.pearls[c]) continue;
+    r.beads++;
+    const probe = { w: face.w, h: face.h, pearls: Int8Array.from(face.pearls) };
+    probe.pearls[c] = 0;
+    const s = solveWithRules(probe);
+    const v = s.status === 'solved' ? verify(s.state) : { ok: false };
+    if (s.status !== 'solved' || !v.ok) continue; // 摘了就推不完 ⇒ 这颗必要
+    let mismatch = false;
+    for (let e = 0; e < refEdges.length; e++) {
+      if (s.state.edges[e] !== (refEdges[e] ? P_LOOP : P_CUT)) { mismatch = true; break; }
+    }
+    if (mismatch) { r.mismatch++; continue; } // 推完却定出另一条环 = 引擎 soundness 破了，另判
+    const cl = countLoops(probe, { budget: BUDGET });
+    if (cl.overbudget) r.noEvidence.push(c);
+    else if (cl.status === 'UNIQUE') r.deletable.push(c);
+  }
+  return r;
+}
+
+// 引擎那三本账（generate.js:189-192 的注释里写着恒等式）。逐样本核对，不轧平就判红——
+// 只看"出货盘上 dropByOverbudget 是不是 0"是不够的：严格模式下那个数是跨条环累计的，
+// 被作废的环也把珠子记进同一格里。所以要的是"每一本账自己加得回来"，不是"某个计数器的读数"。
+function beadAndBoardAccounts(p) {
+  const s = p.stats;
+  const bead = s.dropKept + s.dropByPencil + s.dropByCounter + s.dropByOverbudget + s.dropByMismatch;
+  const board = s.illegalLoop + s.refRejected + s.notUniqueFull + s.overbudgetFull + s.pencilStuckFull + s.loopsAccepted;
+  const ship = p.minimality;
+  const shipBook = ship.kept + ship.byPencil + ship.byCounter + ship.byOverbudget + ship.byMismatch;
+  return [
+    s.dropTried === bead ? null : `珠级 dropTried ${s.dropTried} ≠ 各门之和 ${bead}`,
+    s.trials === board ? null : `盘级 trials ${s.trials} ≠ 各丢弃原因之和 ${board}`,
+    s.loopsAccepted === s.rejectedByMinimal + 1 ? null : `loopsAccepted ${s.loopsAccepted} ≠ rejectedByMinimal ${s.rejectedByMinimal} + 1`,
+    ship.tried === shipBook ? null : `出货环 tried ${ship.tried} ≠ 各门之和 ${shipBook}`,
+    p.candidateCount === p.pearlCount + ship.kept ? null : `候选 ${p.candidateCount} ≠ 端出 ${p.pearlCount} + 挖掉 ${ship.kept}`,
+  ].filter(Boolean);
 }
 
 // ── 逐尺寸读数 ────────────────────────────────────────────────────────────
@@ -161,6 +222,7 @@ function measure(recs) {
   for (const r of shipped) trialHist.set(r.trials, (trialHist.get(r.trials) || 0) + 1);
   const trialAsc = asc(shipped.map((r) => r.trials));
   m.trialsP50 = quantile(trialAsc, 0.5);
+  m.trialsP95 = quantile(trialAsc, 0.95);
   m.trialsMax = trialAsc[trialAsc.length - 1];
   m.trialsAvg = trialAsc.length ? trialAsc.reduce((a, b) => a + b, 0) / trialAsc.length : NaN;
   m.trialHist = [...trialHist.entries()].sort((a, b) => a[0] - b[0]);
@@ -176,14 +238,25 @@ function measure(recs) {
 
   // 两条承诺分开量——上一版把它们混成一个"已证"数，于是拦下了不该拦的东西（裁决见 GATES）：
   //   「唯一解已证」只看**端出去那一盘**的独立复算认不认账（counterNotUnique / notVerified）。
-  //   门 0 的 overbudgetFull 走 generate.js:124-127 的 continue：那张盘面没出货，它只花重试次数。
+  //   门 0 的 overbudgetFull 走 generate.js:125-128 的 continue：那张盘面没出货，它只花重试次数。
   //   挖珠的 dropByOverbudget 走 :171-175 把珠子放回去：出货盘仍 UNIQUE，破的是"每颗珠子都必要"。
   m.counterNotUnique = shipped.filter((r) => r.counter !== 'UNIQUE'); // 独立复算不认账 = 唯一解破口
   m.notVerified = shipped.filter((r) => !r.verified);
   m.notSolved = shipped.filter((r) => r.solveStatus !== 'solved'); // 复算时铅笔没推到底
   m.unproven = shipped.filter((r) => r.counter !== 'UNIQUE' || !r.verified || r.solveStatus !== 'solved');
   m.gate0Overbudget = shipped.filter((r) => r.stats.overbudgetFull > 0); // 重试代价，照打不判红
-  m.minGap = shipped.filter((r) => r.stats.dropByOverbudget > 0); // 极简性没证到的盘
+  // 门 2 的读数分两本，混过一次就得过错误结论（见 DESIGN §7）：
+  //   代价 = rejectedByMinimal（抽废了几条环），照打不判红，它只花墙钟；
+  //   红线 = 端出去那一盘的**独立复算**里有没有"摘得掉的"或"数不完、没证据的"珠子（audit）。
+  m.minBoards = shipped.filter((r) => (r.rejectedByMinimal || 0) > 0); // 有几盘是被门 2 逼着重抽过的
+  m.minLoops = shipped.reduce((a, r) => a + (r.rejectedByMinimal || 0), 0); // 作废环数合计
+  m.minBreak = shipped.filter((r) => r.audit && (r.audit.deletable.length > 0 || r.audit.noEvidence.length > 0));
+  m.minEngineGap = shipped.filter((r) => r.minimality && r.minimality.byOverbudget > 0); // 引擎自己那本账的说法
+  m.accountBreak = shipped.filter((r) => (r.accounts || []).length > 0);
+  m.beadsAudited = shipped.reduce((a, r) => a + (r.audit ? r.audit.beads : 0), 0);
+  m.beadsDeletable = shipped.reduce((a, r) => a + (r.audit ? r.audit.deletable.length : 0), 0);
+  m.beadsNoEvidence = shipped.reduce((a, r) => a + (r.audit ? r.audit.noEvidence.length : 0), 0);
+  m.beadsMismatch = shipped.reduce((a, r) => a + (r.audit ? r.audit.mismatch : 0), 0);
   m.degenerate = shipped.filter((r) => r.degenerate);
 
   // 2) 零猜测可解率
@@ -255,7 +328,7 @@ const T = {
   yieldMenu: 0.75, // 实测（SAMPLES=24，八档全跑）出货率 24/24 = 100%，192 盘没有一盘出不了货。
   // 玩家点一次"换一局"必须有盘（js/main.js:224 出货失败只能提示换 seed），所以这是硬红线；
   // 不取 100% 是因为"某一档开始偶发不出货"就是该报警的信号，25pt 余量＝24 盘里容许 6 盘空。
-  zeroGuessMenu: 0.9, // 实测零猜测可解率 100%（出货盘本来就是靠这道门发的：generate.js:132 门 1、:166 挖珠守卫）。
+  zeroGuessMenu: 0.9, // 实测零猜测可解率 100%（出货盘本来就是靠这道门发的：generate.js:133-136 门 1、:216-220 挖珠的铅笔守卫）。
   // 90% 已经是"每 10 盘容许 1 盘铅笔推不完"的宽松值；真出现就说明 README 那句"零猜测可解"是假话。
   wallP95Ms: 8000, // 实测四遍 24 样本（本机 load1 27~30 / 15 核，有争用）：菜单最差档 10x10 的
   // p50 450~575ms、p95 4443~6589ms、max 5199~6822ms ⇒ 门槛 8000ms 只比实测 p95 上界高 1.2 倍。
@@ -289,13 +362,19 @@ const GATES = [
   // proven 守的是「出货的每一盘都由独立计数器数过唯一解」：把端出去那一盘交给 countLoops 复算，
   // 预算内 UNIQUE、verify 通过、铅笔零猜测推到底——一张不认账就红。这条一次都不许松。
   // 裁决（2026-09-28，我推翻了自己下给这一条的"overbudget* 一律不算已证"）：那一刀量错了对象。
-  // generate.js:124-127 见 OVERBUDGET 就 continue 换下一条环，那张盘面到不了玩家手里，拦它等于拦
+  // generate.js:125-128 见 OVERBUDGET 就 continue 换下一条环，那张盘面到不了玩家手里，拦它等于拦
   // 重试次数；而它当时确实把三档菜单判红（8x8 22/24、9x9 22/24、10x10 18/24），出货率与零猜测
   // 全绿、独立复算 192/192 UNIQUE——把 bug 写成期望的绿闸，比红闸更危险（本仓 bake 那次同类）。
-  // 真正被 overbudget 破掉的是「每颗珠子都必要」：generate.js:171-175 把珠子放回，出货盘仍 UNIQUE，
-  // 所以它挪到下面 minimal 单独披露，并把措辞禁令印在数旁边，不许混进 proven 的分子分母。
+  // 真正被 overbudget 破掉的是「每颗珠子都必要」：旧实现 generate.js:221-226 把那颗珠子放回，出货盘
+  // 仍 UNIQUE，所以它当时只当披露。本轮（2026-09-28 第二次）把它升成下面的 minimal 红线：那颗珠子
+  // 是预算逼着留的、不是证过必要的，于是**整条环作废重抽**（generate.js:143-145 rejectedByMinimal），
+  // 判据也不再是引擎自报的计数器，而是下面 minimal 那条的独立重摘复算。proven 与 minimal 各管一件事：
+  // 前者管"这一盘只有一个解"，后者管"这一盘少一颗珠子就不成题"。
   { key: 'proven', text: '出货盘独立复算=预算内 UNIQUE ∧ verify 通过 ∧ 铅笔零猜测推到底（0 张不认账）' },
-  { key: 'minimal', text: '挖珠止步于预算的盘数逐档披露（>0 时 README 禁写「每颗珠子都是必要的」，只可写「每盘都数过唯一解」）' },
+  // minimal 本轮从"披露"升成"红线"：判据不是引擎的计数器，而是把端出去那一盘的每一颗珠子
+  // 在最终盘面上重摘一遍（摘得掉 = 这颗不必要；超预算数不完 = 这颗没有证据）。两者都判红。
+  { key: 'minimal', text: '出货盘每一颗珠子都经独立重摘证过删不得（摘得掉/超预算无数的一颗都不许有）；rejectedByMinimal 只当重试代价披露' },
+  { key: 'accounts', text: '三本账逐样本轧平（珠级 dropTried、盘级 trials、候选数 = 端出 + 挖掉），不平就红——红线的判据不建立在引擎自报的数上' },
   { key: 'monotone', text: `score p50 沿菜单不降，且首末两档支配概率 ≥ ${T.dominance}` },
   { key: 'wall', text: `每档 Date.now() 墙钟 p95 ≤ ${T.wallP95Ms}ms（来历见 T.wallP95Ms 注释）` },
   { key: 'sound', text: 'illegalLoop / refRejected / dropByMismatch 恒为 0；steps 恒等于盘上边数' },
@@ -320,10 +399,13 @@ function judge(sizeKey, m) {
   push(m.shipped / m.n >= T.yieldMenu, `${sizeKey} 出货率 ${m.shipped}/${m.n} < ${(T.yieldMenu * 100).toFixed(0)}%`);
   push(m.zeroGuess / Math.max(1, m.shipped) >= T.zeroGuessMenu, `${sizeKey} 零猜测可解率 ${pct(m.zeroGuess, m.shipped)} < ${(T.zeroGuessMenu * 100).toFixed(0)}%`);
   push(m.wall.p95 <= T.wallP95Ms, `${sizeKey} 墙钟 p95 ${m.wall.p95}ms > ${T.wallP95Ms}ms`);
-  // 这两条不再判红，改成每次都披露（理由见 GATES 的 proven 注释）：一个只花重试次数，
-  // 一个破的是极简性。唯一解那一头由下面的 hard(counterNotUnique / notVerified) 死守。
-  if (m.gate0Overbudget.length) notes.push(`${sizeKey} ${m.gate0Overbudget.length} 盘出过门 0 overbudgetFull（那张没出货，generate.js:124-127 continue ⇒ 只算重试代价，不是唯一解破口）`);
-  if (m.minGap.length) notes.push(`${sizeKey} ${m.minGap.length} 盘挖珠止步于预算（dropByOverbudget，:171-175 把珠子放回）⇒ 这些盘不许说「每颗珠子都是必要的」`);
+  // 这两条不再判红，改成每次都披露（理由见 GATES 的 proven 注释）：门 0 的 overbudgetFull 只花重试次数。
+  if (m.gate0Overbudget.length) notes.push(`${sizeKey} ${m.gate0Overbudget.length} 盘出过门 0 overbudgetFull（那张没出货，generate.js:125-128 continue ⇒ 只算重试代价，不是唯一解破口）`);
+  // minimal 从"逐档披露"升成硬红线（本轮改的就是这一条）：端出去那一盘的每一颗珠子都要有
+  // "删不得"的证据。判据是上面的独立复算 audit，不是引擎的账——引擎的账由 accounts 那条另行轧平。
+  push(m.minBreak.length === 0, `${sizeKey} 有 ${m.minBreak.length}/${m.shipped} 盘的珠子没证过删不得（独立重摘复算：摘得掉 ${m.beadsDeletable} 颗、超预算无数 ${m.beadsNoEvidence} 颗，盘 ${idsOf(m.minBreak)}）⇒「每颗珠子都删不得」这句就是假话`);
+  hard(m.beadsMismatch === 0, `${sizeKey} 独立重摘复算里有 ${m.beadsMismatch} 颗"铅笔推完却定出另一条环"——铅笔不 sound，极小性的判据本身不成立`);
+  hard(m.accountBreak.length === 0, `${sizeKey} 有 ${m.accountBreak.length}/${m.shipped} 盘账目不轧平：${m.accountBreak.map((r) => `#${r.i}[${r.accounts.join('｜')}]`).join(' ')}`);
   push(m.topHitsShare <= shareCap(), `${sizeKey} 全档推理命中里最大单盘独占 ${(100 * m.topHitsShare).toFixed(0)}% > ${(100 * shareCap()).toFixed(0)}%（上限＝${T.contributionUniformFactor}/SAMPLES，聚合数是被一个样本撑起来的）`);
   hard(m.notVerified.length === 0, `${sizeKey} 有 ${m.notVerified.length} 盘 verify 不过`);
   hard(m.counterNotUnique.length === 0, `${sizeKey} 有 ${m.counterNotUnique.length} 盘独立复算不是预算内 UNIQUE`);
@@ -342,7 +424,7 @@ function printSize(sizeKey, m, recs, mono) {
   const tag = SIZES.includes(sizeKey) ? '菜单' : '不进菜单';
   console.log(`\n── ${sizeKey}（${CELLS(sizeKey)} 格，${tag}）样本 ${m.n} ─────────────────────`);
   // 1 出货率
-  console.log(`1) 出货率 ${m.shipped}/${m.n} = ${pct(m.shipped, m.n)}  trials（仅出货盘，几试一次）avg ${f1(m.trialsAvg)} p50 ${f0(m.trialsP50)} max ${f0(m.trialsMax)}  分布 ${m.trialHist.map(([t, c]) => `${t}试:${c}`).join(' ')}`);
+  console.log(`1) 出货率 ${m.shipped}/${m.n} = ${pct(m.shipped, m.n)}  trials（仅出货盘，几试一次）avg ${f1(m.trialsAvg)} p50 ${f0(m.trialsP50)} p95 ${f0(m.trialsP95)} max ${f0(m.trialsMax)}  分布 ${m.trialHist.map(([t, c]) => `${t}试:${c}`).join(' ')}`);
   const A = m.agg;
   console.log(`   stats 归因（本档 ${m.n} 样本累计）overbudgetFull ${A.overbudgetFull || 0} / pencilStuckFull ${A.pencilStuckFull || 0} / notUniqueFull ${A.notUniqueFull || 0} / dropByOverbudget ${A.dropByOverbudget || 0} / dropByMismatch ${A.dropByMismatch || 0} / dropByPencil ${A.dropByPencil || 0} / dropByCounter ${A.dropByCounter || 0} / dropByColor ${A.dropByColor || 0} / illegalLoop ${A.illegalLoop || 0} / refRejected ${A.refRejected || 0} / loopsAccepted ${A.loopsAccepted || 0}`);
   const shippedRecs = recs.filter((r) => r.ok);
@@ -352,8 +434,10 @@ function printSize(sizeKey, m, recs, mono) {
   if (m.failReasons.length) console.log(`   没出货的样本：${m.failReasons.join(' ')}`);
   const ids = (a) => (a.length ? a.map((r) => `#${r.i}`).join(',') : '-');
   console.log(`   两条承诺分开数：唯一解已证 ${m.shipped - m.unproven.length}/${m.shipped}（复算不认账：非 UNIQUE ${m.counterNotUnique.length} 盘 ${ids(m.counterNotUnique)}、verify 不过 ${m.notVerified.length} 盘 ${ids(m.notVerified)}、铅笔没推到底 ${m.notSolved.length} 盘 ${ids(m.notSolved)}）`);
-  console.log(`   门 0 overbudget（那张盘面没出货，:124-127 continue ⇒ 只是重试代价）${m.gate0Overbudget.length} 盘 ${ids(m.gate0Overbudget)}｜极简性没证到（挖珠被预算逼着留珠，:171-175）${m.minGap.length} 盘 ${ids(m.minGap)}`);
-  if (m.minGap.length) console.log(`     ⇒ 措辞禁令：本档 ${m.minGap.length}/${m.shipped} 盘里有珠子是"预算逼着留下的"，README/DESIGN 不许写「每颗珠子都是必要的」；「出货的每一盘都数过唯一解」这句在上面那个 0 张不认账时才允许写。`);
+  console.log(`   门 0 overbudget（那张盘面没出货，generate.js:125-128 continue ⇒ 只是重试代价）${m.gate0Overbudget.length}/${m.shipped} 盘 ${ids(m.gate0Overbudget)}｜门 2 抽废的环（rejectedByMinimal）合计 ${m.minLoops} 条、发生在 ${m.minBoards.length}/${m.shipped} 盘 ${ids(m.minBoards)}`);
+  console.log(`   极小性独立复算（每盘每颗珠子在最终盘面上重摘一遍）：复算 ${m.beadsAudited} 颗 ⇒ 摘得掉 ${m.beadsDeletable} 颗、超预算数不完 ${m.beadsNoEvidence} 颗、mismatch ${m.beadsMismatch} 颗 ⇒ 破口 ${m.minBreak.length}/${m.shipped} 盘 ${ids(m.minBreak)}（这是红线，0 才许发货）`);
+  console.log(`   引擎自己那本账（${DOSE_NO_STRICT ? '门 2 已被 --dose=minimal 关掉' : '门 2 开着'}）：出货环里 byOverbudget>0 的 ${m.minEngineGap.length}/${m.shipped} 盘 ${ids(m.minEngineGap)}｜三本账轧平 ${m.shipped - m.accountBreak.length}/${m.shipped} 盘${m.accountBreak.length ? '，不平的：' + m.accountBreak.map((r) => `#${r.i}[${r.accounts.join('｜')}]`).join(' ') : ''}`);
+  if (m.minBreak.length) console.log(`     ⇒ 措辞禁令：本档 ${m.minBreak.length}/${m.shipped} 盘里有珠子中门既没证"删不得"也没证"删得掉"，README/DESIGN 不许写「每颗珠子都删不得」；那句只能等这一行是 0 才许印。`);
   if (m.degenerate.length) console.log(`   退化样本（环满盘或一颗没挖掉）：${m.degenerate.map((r) => `#${r.i}`).join(' ')}`);
   // 2 零猜测
   console.log(`2) 零猜测可解率 ${m.zeroGuess}/${m.shipped} = ${pct(m.zeroGuess, m.shipped)}（solveWithRules 空盘→唯一解，零回溯且 verify 通过）stuck ${m.stuck.length ? m.stuck.map((i) => `#${i}`).join(',') : '-'}｜意外 status ${m.otherStatus.length ? m.otherStatus.join(',') : '-'}`);
@@ -366,19 +450,21 @@ function printSize(sizeKey, m, recs, mono) {
   for (const r of m.rules) {
     console.log(`     ${r.key.padEnd(16)} 命中 ${String(r.total).padStart(4)}（均 ${(r.perSample || 0).toFixed(1)}/盘，覆盖 ${pct(r.touched, m.shipped)} 盘）｜最大贡献 ${r.top} 次 = 该规则命中的 ${(100 * r.topShare).toFixed(0)}%（样本 #${r.topSample}）｜${RULE_TEXT[r.key] || ''}`);
   }
-  // 5 墙钟（绝对值每次必打）
-  console.log(`5) 墙钟 Date.now()：p50 ${m.wall.p50}ms p95 ${m.wall.p95}ms max ${m.wall.max}ms（绝对值，实测非推算）p95/p50 ${m.wall.p50 ? (m.wall.p95 / m.wall.p50).toFixed(1) : '-'} 倍｜引擎自记 stats.msTotal p50 ${f1(m.ms.p50)} p95 ${f1(m.ms.p95)} max ${f1(m.ms.max)}ms`);
+  // 5 墙钟（绝对值每次必打，而且**每次都要带着本机 load**——上一版的墙钟数字全部量在被别的会话
+  // 抢核的机器上，事后连"到底膨胀了几倍"都说不清，所以读数与负载必须绑在同一行里）
+  const laHere = loadavg();
+  console.log(`5) 墙钟 Date.now()：p50 ${m.wall.p50}ms p95 ${m.wall.p95}ms max ${m.wall.max}ms（绝对值，实测非推算）p95/p50 ${m.wall.p50 ? (m.wall.p95 / m.wall.p50).toFixed(1) : '-'} 倍｜红线 p95 ≤ ${T.wallP95Ms}ms ⇒ ${m.wall.p95 <= T.wallP95Ms ? '未撞线' : '撞线'}（余量 ${(T.wallP95Ms / Math.max(1, m.wall.p95)).toFixed(1)} 倍）｜引擎自记 stats.msTotal p50 ${f1(m.ms.p50)} p95 ${f1(m.ms.p95)} max ${f1(m.ms.max)}ms｜本行打印时 load ${laHere.map((x) => x.toFixed(2)).join('/')}（${NCPU} 核）`);
   // 6 单调性
   if (mono) console.log(`6) ${mono.text}`);
   // 逐样本一行（每行 6 个）
-  console.log(`   逐样本 #=样本号 t=trials w=墙钟ms s=steps sc=分数 p=珠数 cand=候选 drop=挖掉：`);
+  console.log(`   逐样本 #=样本号 t=trials r=门 2 抽废的环 w=墙钟ms s=steps sc=分数 p=珠数 cand=候选 drop=挖掉 a=复算珠数：`);
   for (let k = 0; k < recs.length; k += 6) {
-    const line = recs.slice(k, k + 6).map((r) => (r.ok ? `#${r.i} t${r.trials} w${r.wall} s${r.steps} sc${r.score} p${r.pearlCount}c${r.candidateCount}d${r.dropKept}` : `#${r.i} FAIL(${r.status}) w${r.wall}`)).join('  ');
+    const line = recs.slice(k, k + 6).map((r) => (r.ok ? `#${r.i} t${r.trials}r${r.rejectedByMinimal || 0} w${r.wall} s${r.steps} sc${r.score} p${r.pearlCount}c${r.candidateCount}d${r.dropKept}a${r.audit ? r.audit.beads : 0}` : `#${r.i} FAIL(${r.status}) w${r.wall}`)).join('  ');
     console.log(`     ${line}`);
   }
   const { flags, notes } = judge(sizeKey, m, mono);
   console.log(`   红线：${flags.length ? 'RED — ' + flags.join('；') : '无'}`);
-  if (notes.length) console.log(`   披露项（不进 RESULT：重试代价 / 极简性没证到的盘，菜单档也打）：${notes.join('；')}`);
+  if (notes.length) console.log(`   披露项（不进 RESULT：重试代价类，菜单档也打）：${notes.join('；')}`);
   return { flags, notes };
 }
 
@@ -414,11 +500,13 @@ function main() {
   }
 
   const la = loadavg();
-  const ncpu = cpus().length;
-  console.log(`balance 难度实测：SAMPLES=${SAMPLES} 档位=${LADDER.join(',')} 预算=${BUDGET} maxTrials=${MAX_TRIALS} 出货配置同 js/main.js:215（requireBothColors:false，budget/maxTrials 用默认值）`);
-  console.log(`本机 load average（1/5/15 分钟）= ${la.map((x) => x.toFixed(2)).join(' / ')}，核数 ${ncpu}。`);
-  console.log('  ⚠ 本机现在有两个别的会话遗留的失控 node 进程在吃 CPU（z-biz-game-nikoli-loops 的 probe、test/slitherlink.test.mjs），'
-    + '所以下面所有**墙钟绝对值都带争用**、只能当上界看；分数/步数/出货率是纯计算口径，不受争用影响。');
+  console.log(`balance 难度实测：SAMPLES=${SAMPLES} 档位=${LADDER.join(',')} 预算=${BUDGET} maxTrials=${MAX_TRIALS} 出货配置同 js/main.js:215（requireBothColors:false，budget/maxTrials/strictMinimal 用默认值）${DOSE_NO_STRICT ? '　【剂量 --dose=minimal：门 2 已关掉，本轮读数不是出货配置】' : ''}`);
+  console.log(`本机 load average（1/5/15 分钟）= ${la.map((x) => x.toFixed(2)).join(' / ')}，核数 ${NCPU} ⇒ load1/核 ${((la[0] / NCPU) * 100).toFixed(0)}%。`);
+  // 这一句必须是**当场算的**，不能是一段写死的注释：上一批墙钟数字量在 load 27~30 的机器上，
+  // 而文档里那句"机器被抢核"是手抄的，抄到第二批就成了假话。每个 timing 行都自带 load。
+  console.log(la[0] > NCPU * 0.5
+    ? `  ⚠ load1 已超过核数的一半：下面**墙钟绝对值带争用**，只能当上界读；分数/步数/出货率/复算结论是纯计算口径，不受争用影响。`
+    : `  load1 低于核数的一半：本轮墙钟按**无争用**读数使用（每条 timing 行仍各自打印当时的 load）。`);
   console.log('  可复现口径：seed 串 balance|<sizeKey>|<1..N> 固定，随机不发生在生成器与任何排序比较器里；'
     + '实测两次 24 样本跑，diff 只落在带墙钟数字的行上，分数/步数/命中率/出货率逐字节一致。');
   const flags = [];
@@ -431,13 +519,13 @@ function main() {
   if (!mono.ok) flags.push(mono.text);
   // 跨档对照：菜单五档 vs 三个不进菜单的尺寸
   console.log('\n── 菜单该挂哪几档（同表对照；分数是 balance 自定义度量）──');
-  console.log('   尺寸        出货率   零猜测   steps p50/p95     分数 p50/p95     墙钟 p50/p95/max   盘均珠数/候选');
+  console.log('   尺寸        出货率   零猜测   steps p50/p95     分数 p50/p95     墙钟 p50/p95/max   盘均珠数/候选  门2抽废(环/盘)  极小破口');
   for (const sizeKey of LADDER) {
     const m = per[sizeKey].m;
     const shipped = per[sizeKey].recs.filter((r) => r.ok);
     const avgP = shipped.length ? (shipped.reduce((a, r) => a + r.pearlCount, 0) / shipped.length).toFixed(1) : '-';
     const avgC = shipped.length ? (shipped.reduce((a, r) => a + r.candidateCount, 0) / shipped.length).toFixed(1) : '-';
-    console.log(`   ${sizeKey.padEnd(6)} ${SIZES.includes(sizeKey) ? '菜单  ' : '对照  '} ${(m.shipped + '/' + m.n).padEnd(8)} ${pct(m.zeroGuess, m.shipped).padEnd(8)} ${`${f0(m.steps.p50)}/${f0(m.steps.p95)}`.padEnd(15)} ${`${f0(m.score.p50)}/${f0(m.score.p95)}`.padEnd(16)} ${`${m.wall.p50}/${m.wall.p95}/${m.wall.max}ms`.padEnd(18)} ${avgP}/${avgC}`);
+    console.log(`   ${sizeKey.padEnd(6)} ${SIZES.includes(sizeKey) ? '菜单  ' : '对照  '} ${(m.shipped + '/' + m.n).padEnd(8)} ${pct(m.zeroGuess, m.shipped).padEnd(8)} ${`${f0(m.steps.p50)}/${f0(m.steps.p95)}`.padEnd(15)} ${`${f0(m.score.p50)}/${f0(m.score.p95)}`.padEnd(16)} ${`${m.wall.p50}/${m.wall.p95}/${m.wall.max}ms`.padEnd(18)} ${`${avgP}/${avgC}`.padEnd(13)} ${`${m.minLoops}/${m.minBoards.length}盘`.padEnd(14)} ${m.minBreak.length ? `RED ${m.minBreak.length}/${m.shipped}` : `0/${m.shipped}`}`);
   }
   // 规则全景：跨八档看每条规则命中了多少盘——0 命中的规则要照说"它对出货盘没有贡献"。
   const globalRule = new Map(RULE_ORDER.map((k) => [k, { hits: 0, boards: 0 }]));
@@ -459,9 +547,14 @@ function main() {
   }
   console.log('\n门禁口径（GATES，来历见 balance.mjs 里 GATES 的注释）：');
   for (const g of GATES) console.log(`  · ${g.text}`);
-  if (globalThis.__doseLanded) {
-    console.log(`\n[DOSE] 变异已落地：${globalThis.__doseLanded}｜红线 ${flags.length} 项` +
-      (flags.length ? '（摘一颗珠子就红 ⇒ proven 那条闸确实咬得住）' : '（摘了珠子还全绿 ⇒ 这条闸不咬，上面的绿别当证据）'));
+  if (globalThis.__doseLanded || DOSE_NO_STRICT) {
+    const doseText = DOSE_NO_STRICT
+      ? '门 2 已关掉（strictMinimal:false）⇒ 生成器退回"超预算就把那颗珠子放回去"'
+      : `变异已落地：${globalThis.__doseLanded}`;
+    console.log(`\n[DOSE] ${doseText}｜红线 ${flags.length} 项` +
+      (flags.length
+        ? `（${DOSE_NO_STRICT ? '把严格性拿掉就红 ⇒ minimal 那条闸确实咬得住，红的是"这颗珠子没有证据"那几盘' : '摘一颗珠子就红 ⇒ proven 那条闸确实咬得住'}）`
+        : `（${DOSE_NO_STRICT ? '关掉了门 2 还没红 ⇒ minimal 那条闸不咬，上面的绿别当证据' : '摘了珠子还全绿 ⇒ 这条闸不咬，上面的绿别当证据'}）`));
   }
   console.log(`RESULT ok=${flags.length === 0}`);
   return flags.length === 0 ? 0 : 1;

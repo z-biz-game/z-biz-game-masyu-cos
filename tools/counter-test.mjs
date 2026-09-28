@@ -9,8 +9,9 @@
 // 另外三件事：
 //   ① 证明计数器"开过火"：在 notUniqueFull 的环和故意欠 clues 的盘上必须报 count>1（预算内），
 //      在出货盘和满候选题面上必须恰好 1。
-//   ② 解释出题器里 dropByCounter=0：把同一条挖珠序列重放一遍，对每次"试着挖"同时跑铅笔和计数器，
-//      给出交叉表 —— 到底是"铅笔推不完 ⇒ 计数器没机会说话"还是"计数器真的没用"。
+//   ② 解释出题器里 dropByCounter=0：把出题器两层循环（门 0 → 门 1 → 门 2 挖珠，含"严格作废后换下一条环"）
+//      整个重放一遍，对每次"试着挖"同时跑铅笔和计数器，给出交叉表 —— 到底是"铅笔推不完 ⇒ 计数器没机会说话"
+//      还是"计数器真的没用"。④b 另钉三张会被门 2 作废的盘，证明这条重播真走过作废那一路。
 //   ③ OVERBUDGET 可达：把预算压到某个真实 10×10 候选超预算，证明流水线是丢环/留珠，绝不出货。
 //
 // 用法：node tools/counter-test.mjs [尺寸] [生成盘样本数]
@@ -299,6 +300,94 @@ console.log('\n# ③ 出货盘逐盘：计数器 UNIQUE + 铅笔 solved');
 }
 
 // ── ④ 挖珠交叉表：为什么 dropByCounter = 0 ─────────────────────────────
+// 门 2 的循环另抄一遍（不 import 引擎的 digPearls——它没导出，而且抄一遍才是交叉验证）：
+// 逐颗试删，铅笔推不完 / 不唯一 / mismatch ⇒ 放回；计数器超预算 ⇒ 这颗拿不出"删不得"的证据，
+// 严格模式当场收工、整条环作废换下一条。所以复刻必须连"作废"这一路一起复刻，
+// 否则它复算的是第一条过门 0/1 的环，而出货的是后面某一条，指纹必然对不上。
+function digReplay({ w, h, cand, refEdges, digKey, budget }) {
+  const pearls = Int8Array.from(cand.pearls);
+  const cells = [];
+  for (let c = 0; c < pearls.length; c++) if (pearls[c]) cells.push(c);
+  const order = makeRng(digKey).shuffle(cells); // 与出题器同一把钥匙：顺序里没有 trial 号
+  let blackLeft = cand.black;
+  let whiteLeft = cand.white;
+  let forced = 0;
+  const tally = { tried: 0, kept: 0, byPencil: 0, byCounter: 0, byOverbudget: 0, byMismatch: 0 };
+  const rows = [];
+  for (const cell of order) {
+    const saved = pearls[cell];
+    const isBlack = saved === 1;
+    pearls[cell] = 0;
+    // 照抄出题器的 requireBothColors 守卫：黑白各留一颗时这颗根本不会被试挖，
+    // 把它算进"试挖"里会让下面的占比失真
+    if (blackLeft - (isBlack ? 1 : 0) === 0 || whiteLeft - (isBlack ? 0 : 1) === 0) {
+      pearls[cell] = saved;
+      rows.push({ skipped: true });
+      continue;
+    }
+    const s = solveWithRules({ w, h, pearls });
+    const pencilOk = s.status === 'solved' && verify(s.state).ok; // verify 不过 = 出题器眼里推不完
+    // 出题器还比一条"铅笔定出的环 == 参考环"（mismatch），它对计数器的态度没影响，单独记
+    let mismatch = false;
+    if (pencilOk) {
+      for (let e = 0; e < refEdges.length; e++) {
+        if (s.state.edges[e] !== (refEdges[e] ? 1 : 2)) mismatch = true;
+      }
+    }
+    const cl = countLoops({ w, h, pearls }, { budget }); // 铅笔推不完时出题器不问计数器，这里问了才看得见交叉表
+    // 出题器的丢弃顺序：铅笔 → 超预算 → 非 UNIQUE → mismatch
+    const kept = pencilOk && !cl.overbudget && cl.status === 'UNIQUE' && !mismatch;
+    tally.tried++;
+    if (kept) {
+      tally.kept++;
+      if (isBlack) blackLeft--;
+      else whiteLeft--;
+    } else {
+      pearls[cell] = saved;
+      if (!pencilOk) tally.byPencil++;
+      else if (cl.overbudget) {
+        tally.byOverbudget++;
+        forced++; // 这颗珠子只是"预算逼着留下的"，没有"删不得"的证据
+      } else if (cl.status !== 'UNIQUE') tally.byCounter++;
+      else tally.byMismatch++;
+    }
+    rows.push({ skipped: false, pencilOk, over: cl.overbudget, count: cl.count, status: cl.status, mismatch, kept });
+    if (forced) break; // 严格模式：这条环已经废了，再问后面的珠子也是白问
+  }
+  return { pearls, black: blackLeft, white: whiteLeft, forced, tally, rows };
+}
+
+// 复刻整个 makePuzzle（门 0 → 门 1 → 门 2，含严格作废后重抽下一条环）
+function replayMakePuzzle(seed, sizeKey, budget) {
+  const { w, h } = parseSize(sizeKey);
+  let acc = null;
+  let dig = null;
+  let rejLoops = 0; // 过了门 0/1、却因"有一颗珠子只是预算逼着留下的"被作废的环数
+  for (let t = 0; t < 40; t++) {
+    const lr = randomLoop(w, h, `${seed}|loop#${t}`);
+    if (!lr.ok) continue;
+    const cand = candidatesOf(w, h, lr.edges);
+    const pz = { w, h, pearls: cand.pearls };
+    if (!checkLoop(w, h, lr.edges).ok || !satisfies(w, h, cand.pearls, lr.edges)) continue;
+    const cl = countLoops(pz, { budget });
+    if (cl.status !== 'UNIQUE') continue;
+    const s = solveWithRules(pz);
+    if (s.status !== 'solved' || !verify(s.state).ok) continue;
+    const one = digReplay({ w, h, cand, refEdges: lr.edges, digKey: `${seed}|dig|${w}x${h}`, budget });
+    if (one.forced > 0) {
+      rejLoops++; // rejectedByMinimal：整条环作废，回外层重抽
+      continue;
+    }
+    acc = { lr, cand };
+    dig = one;
+    break;
+  }
+  return { w, h, acc, dig, rejLoops };
+}
+
+const tallySame = (a, b) => Object.keys(a).every((k) => a[k] === b[k]);
+const tallyText = (a, b) => `复刻 ${JSON.stringify(a)} vs 引擎 ${JSON.stringify(b)}`;
+
 console.log('\n# ④ 重放出题器的挖珠序列，每次试着挖都同时问铅笔和计数器');
 {
   const sizes = SIZE_ARG ? [SIZE_ARG] : ['6x6', '8x8'];
@@ -315,86 +404,47 @@ console.log('\n# ④ 重放出题器的挖珠序列，每次试着挖都同时�
     let pencilOkOver = 0;
     let pencilOkMismatch = 0; // 铅笔推完推得通、但定出的环不是参考环（出题器记 dropByMismatch）
     let boards = 0;
+    let rejTotal = 0; // 门 2 作废的环数（rejectedByMinimal 的复刻值）
     for (let i = 0; i < SAMPLES; i++) {
       const seed = `counter|audit|${sizeKey}|${i}`;
-      // 复刻 makePuzzle 的"找环"：同样的 seed 串、同样的判据（顺序无关，判据是合取）
       const budget = PIPE_BUDGET;
-      let acc = null;
-      for (let t = 0; t < 40; t++) {
-        const lr = randomLoop(w, h, `${seed}|loop#${t}`);
-        if (!lr.ok) continue;
-        const cand = candidatesOf(w, h, lr.edges);
-        const pz = { w, h, pearls: cand.pearls };
-        if (!checkLoop(w, h, lr.edges).ok || !satisfies(w, h, cand.pearls, lr.edges)) continue;
-        const cl = countLoops(pz, { budget });
-        if (cl.status !== 'UNIQUE') continue;
-        const s = solveWithRules(pz);
-        if (s.status !== 'solved' || !verify(s.state).ok) continue;
-        acc = { lr, cand };
-        break;
-      }
-      if (!acc) {
-        check(`${sizeKey}#${i} 复刻找环成功`, false, '40 次没找到可用环');
+      const rep = replayMakePuzzle(seed, sizeKey, budget);
+      if (!rep.acc) {
+        check(`${sizeKey}#${i} 复刻找环成功`, false, `40 次里作废 ${rep.rejLoops} 条`);
         continue;
       }
       // 出货结果必须和 makePuzzle 一模一样（指纹相同），否则下面的交叉表不代表真实运行
       const real = makePuzzle(seed, sizeKey, { requireBothColors: true, budget, maxTrials: 40 });
-      const pearls = Int8Array.from(acc.cand.pearls);
-      const cells = [];
-      for (let c = 0; c < pearls.length; c++) if (pearls[c]) cells.push(c);
-      const order = makeRng(`${seed}|dig|${w}x${h}`).shuffle(cells);
-      let blackLeft = acc.cand.black;
-      let whiteLeft = acc.cand.white;
+      const fp = fingerprint(w, h, rep.dig.pearls, rep.acc.lr.edges);
+      check(`${sizeKey}#${i} 复刻挖珠结果 = makePuzzle 出货`, real.ok && real.fingerprint === fp, `${real.fingerprint} vs ${fp}`);
+      check(`${sizeKey}#${i} 复刻作废环数 = rejectedByMinimal`, rep.rejLoops === real.stats.rejectedByMinimal, `${rep.rejLoops} vs ${real.stats.rejectedByMinimal}`);
+      check(`${sizeKey}#${i} 复刻挖珠账 = 引擎 minimality`, tallySame(rep.dig.tally, real.minimality), tallyText(rep.dig.tally, real.minimality));
       boards++;
-      for (const cell of order) {
-        const saved = pearls[cell];
-        const isBlack = saved === 1;
-        pearls[cell] = 0;
-        // 照抄出题器的 requireBothColors 守卫：黑白各留一颗时这颗根本不会被试挖，
-        // 把它算进"试挖"里会让下面的占比失真
-        if (blackLeft - (isBlack ? 1 : 0) === 0 || whiteLeft - (isBlack ? 0 : 1) === 0) {
-          pearls[cell] = saved;
+      rejTotal += rep.rejLoops;
+      for (const r of rep.dig.rows) {
+        if (r.skipped) {
           skippedByColor++;
           continue;
         }
         tried++;
-        const s = solveWithRules({ w, h, pearls });
-        const pencilOk = s.status === 'solved' && verify(s.state).ok;
-        // 出题器还比一条"铅笔定出的环 == 参考环"（mismatch），它对计数器的态度没影响，单独记
-        let mismatch = false;
-        if (pencilOk) {
-          for (let e = 0; e < acc.lr.edges.length; e++) {
-            if (s.state.edges[e] !== (acc.lr.edges[e] ? 1 : 2)) mismatch = true;
-          }
-        }
-        const cl = countLoops({ w, h, pearls }, { budget });
-        if (pencilOk) {
-          if (mismatch) pencilOkMismatch++;
-          if (cl.status === 'UNIQUE') pencilOkCounterUnique++;
-          else if (cl.overbudget) pencilOkOver++;
+        if (r.pencilOk) {
+          if (r.mismatch) pencilOkMismatch++;
+          if (r.over) pencilOkOver++;
+          else if (r.status === 'UNIQUE') pencilOkCounterUnique++;
           else pencilOkCounterNotUnique++;
         } else {
-          if (cl.overbudget) pencilFailCounterOver++;
-          else if (cl.count > 1) pencilFailCounterMulti++;
+          if (r.over) pencilFailCounterOver++;
+          else if (r.count > 1) pencilFailCounterMulti++;
           else pencilFailCounterUnique++;
         }
-        // 出题器的丢弃顺序：铅笔 → 超预算 → 非 UNIQUE → mismatch
-        const restores = !(pencilOk && !cl.overbudget && cl.status === 'UNIQUE' && !mismatch);
-        if (restores) pearls[cell] = saved;
-        else {
-          kept++;
-          if (isBlack) blackLeft--;
-          else whiteLeft--;
-        }
+        if (r.kept) kept++;
       }
-      if (real.ok) check(`${sizeKey}#${i} 复刻挖珠结果 = makePuzzle 出货`, real.fingerprint === fingerprint(w, h, pearls, acc.lr.edges), `${real.fingerprint} vs ${fingerprint(w, h, pearls, acc.lr.edges)}`);
-      void real;
     }
     const total = tried;
     const pencilRejected = total - kept; // 出题器口径：留回原位的=它拦下的（dropByPencil+dropByCounter+dropByOverbudget+dropByMismatch）
     const pencilFailTotal = pencilFailCounterMulti + pencilFailCounterOver + pencilFailCounterUnique;
     const pencilOkTotal = pencilOkCounterUnique + pencilOkCounterNotUnique + pencilOkOver;
-    console.log(`  ${sizeKey}：${boards} 个盘，试挖 ${total} 颗（另有 ${skippedByColor} 颗因"黑白各留一颗"根本没试），挖掉 ${kept} 颗，出题器拦下 ${pencilRejected} 颗`);
+    console.log(`  ${sizeKey}：${boards} 个盘，试挖 ${total} 颗（另有 ${skippedByColor} 颗因"黑白各留一颗"根本没试），挖掉 ${kept} 颗，出题器拦下 ${pencilRejected} 颗，门 2 作废 ${rejTotal} 条环`);
     console.log(`    铅笔推不完：${pencilFailTotal} 颗 → 计数器视角：MULTIPLE ${pencilFailCounterMulti}、超预算 ${pencilFailCounterOver}、UNIQUE ${pencilFailCounterUnique}`);
     console.log(`    铅笔推得完：${pencilOkTotal} 颗 → 计数器视角：UNIQUE ${pencilOkCounterUnique}、MULTIPLE ${pencilOkCounterNotUnique}、超预算 ${pencilOkOver}（其中"铅笔定的环 ≠ 参考环"的 mismatch ${pencilOkMismatch} 颗）`);
     check(`${sizeKey} 交叉表自洽（两个桶覆盖全部试挖）`, pencilFailTotal + pencilOkTotal === total, `${pencilFailTotal}+${pencilOkTotal} vs ${total}`);
@@ -406,6 +456,35 @@ console.log('\n# ④ 重放出题器的挖珠序列，每次试着挖都同时�
     // 这条断言才是真正的交叉验证：铅笔推完了盘，计数器却说"不止一解" ⇒ 铅笔里有规则不 sound
     check(`${sizeKey} 没有"铅笔推完却仍多解"的盘（铅笔与计数器互相印证）`, pencilOkCounterNotUnique === 0, `${pencilOkCounterNotUnique} 颗`);
   }
+}
+
+// ── ④b 严格作废那一路必须真的走过 ───────────────────────────────────────
+// 上面默认档（6x6/8x8）的 seed 一张都不会作废，于是"作废后换下一条环"这段复刻代码在那儿是死的。
+// 这里钉三张会作废的盘（实测：counter|audit|9x9|6 作废 1 条、|8 作废 1 条、10x10|3 作废 1 条），
+// 断言复刻的作废条数与引擎的 rejectedByMinimal 逐盘相等、出货指纹相等、出货那条环的挖珠账相等。
+// 若出题器哪天不再作废（或换了 seed→盘映射），"至少作废 1 条"这条会红——那是提醒重新挑 seed，
+// 不是引擎坏了；正如 ① 要证明计数器"开过火"。
+console.log('\n# ④b 严格门：挖到一颗只是预算逼着留下的珠子 ⇒ 整条环作废，复刻必须跟着换环');
+{
+  const witnesses = ['9x9#6', '9x9#8', '10x10#3'];
+  let fired = 0;
+  for (const tag of witnesses) {
+    const sizeKey = tag.split('#')[0];
+    const i = Number(tag.split('#')[1]);
+    const seed = `counter|audit|${sizeKey}|${i}`;
+    const budget = PIPE_BUDGET;
+    const rep = replayMakePuzzle(seed, sizeKey, budget);
+    const real = makePuzzle(seed, sizeKey, { requireBothColors: true, budget, maxTrials: 40 });
+    const fp = rep.acc ? fingerprint(rep.w, rep.h, rep.dig.pearls, rep.acc.lr.edges) : '-';
+    console.log(`  ${tag}：复刻作废 ${rep.rejLoops} 条环，引擎 rejectedByMinimal=${real.stats.rejectedByMinimal}（试了 ${real.stats.trials} 条环）｜出货盘挖珠账 ${JSON.stringify(rep.dig && rep.dig.tally)}`);
+    check(`${tag} 引擎确实作废过环（rejectedByMinimal > 0）`, real.stats.rejectedByMinimal > 0, `${real.stats.rejectedByMinimal}`);
+    check(`${tag} 复刻的作废条数 = 引擎的`, rep.rejLoops === real.stats.rejectedByMinimal, `${rep.rejLoops} vs ${real.stats.rejectedByMinimal}`);
+    check(`${tag} 复刻出货 = makePuzzle 出货（指纹）`, !!rep.acc && real.ok && real.fingerprint === fp, `${real.fingerprint} vs ${fp}`);
+    check(`${tag} 出货盘里再没有"预算逼着留下的珠子"`, !!rep.acc && rep.dig.forced === 0 && real.minimality.byOverbudget === 0, `复刻 ${rep.dig && rep.dig.forced}／引擎 ${real.minimality.byOverbudget}`);
+    check(`${tag} 复刻挖珠账 = 引擎 minimality`, !!rep.acc && tallySame(rep.dig.tally, real.minimality), rep.acc ? tallyText(rep.dig.tally, real.minimality) : '没出货');
+    if (real.stats.rejectedByMinimal > 0) fired++;
+  }
+  check(`三张 witness 盘里至少一张真被严格门废过环（不然这一节没走过）`, fired > 0, `${fired}/3`);
 }
 
 // ── ⑤ OVERBUDGET 可达且绝不出货 ─────────────────────────────────────────
