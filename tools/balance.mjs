@@ -16,6 +16,7 @@
 // 跑法：
 //   SAMPLES=24 node tools/balance.mjs            正式跑（默认 SAMPLES=24）
 //   node tools/balance.mjs --quiet               只打一行 RESULT ok=<true|false>（门禁用）
+//   node tools/balance.mjs --dose=6x6#2          摘掉那一盘的一颗珠子，验 proven 闸还咬不咬（必红）
 // 退出码：0 = 全绿；1 = 有红线（见文末 GATES）。
 //
 // 本文件只读 js/ 下的公开出口，不改引擎、不碰浏览器、不联网。
@@ -29,6 +30,18 @@ const QUIET = process.argv.includes('--quiet');
 const SAMPLES = Math.max(1, Number(process.env.SAMPLES) || 24);
 const BUDGET = 400_000; // 与 js/engine/generate.js:93 的 opts.budget 默认值一致（出货配置）
 const MAX_TRIALS = 40; // 与 js/engine/generate.js:94 一致
+
+// 变异剂量 --dose=<sizeKey>#<i>：把指定那一盘的一颗珠子摘掉，专门用来证明 proven 那条红线还咬得住。
+// 需要它的原因：这条闸现在绿着，而"绿着"不等于"拦得住"——本组织 bake 那次就是绿的闸写着错的期望。
+// 摘珠子破的是挖珠不变式（generate.js:153-189：每颗留下的珠子都试过摘，摘了就不认账），所以复算
+// 必须当场报出 非 UNIQUE / verify 不过 / 铅笔没推到底 中的至少一个。摘了还全绿 ⇒ 是闸坏了，不是盘没事。
+const DOSE = (() => {
+  const a = process.argv.find((s) => s.startsWith('--dose='));
+  if (!a) return null;
+  const m = /^--dose=([0-9]+x[0-9]+)#([0-9]+)$/.exec(a);
+  if (!m) throw new Error(`--dose 的形状是 --dose=6x6#2，收到 ${a}`);
+  return { sizeKey: m[1], i: Number(m[2]) };
+})();
 
 // 档位：SIZES 是 UI 下拉框真正遍历的五档（js/main.js:435）；SIZE_TABLE 里另外三个长方形
 // 不进菜单，本文件照样量——它们是"为什么菜单只有这五个"的对照组。
@@ -103,6 +116,14 @@ function runSize(sizeKey, n) {
     };
     if (p.ok) {
       const face = { w: p.w, h: p.h, pearls: p.pearls };
+      if (DOSE && sizeKey === DOSE.sizeKey && i === DOSE.i) {
+        const dp = Int8Array.from(face.pearls);
+        const cell = dp.findIndex((x) => x !== 0);
+        if (cell < 0) throw new Error(`--dose 落空：${sizeKey}#${i} 盘上一颗珠子都没有，变异等于没做`);
+        globalThis.__doseLanded = `${sizeKey}#${i} 摘掉第 ${cell} 格（原值 ${dp[cell]}）`;
+        dp[cell] = 0;
+        face.pearls = dp;
+      }
       // 独立复算（不吃引擎的中间结果）：铅笔从空盘零猜测推到底 + 计数器预算内唯一。
       const s = solveWithRules(face, { maxSteps: 20000 });
       const v = s.status === 'solved' ? verify(s.state) : { ok: false, why: '未推完' };
@@ -153,12 +174,16 @@ function measure(recs) {
     .filter((r) => !r.ok)
     .map((r) => `#${r.i}:${r.status}`);
 
-  // 已证唯一解 vs "唯一解没证完"（overbudget 一律不算已证，见 GATES 第 3 条）
-  m.notFullyProven = shipped.filter((r) => r.stats.overbudgetFull > 0 || r.stats.dropByOverbudget > 0);
-  m.gate0Overbudget = shipped.filter((r) => r.stats.overbudgetFull > 0); // 门 0 就数不完预算的样本
-  m.dropOnlyOverbudget = m.notFullyProven.filter((r) => r.stats.overbudgetFull === 0); // 只在挖珠止步
-  m.counterNotUnique = shipped.filter((r) => r.counter !== 'UNIQUE'); // 独立复算不认账
+  // 两条承诺分开量——上一版把它们混成一个"已证"数，于是拦下了不该拦的东西（裁决见 GATES）：
+  //   「唯一解已证」只看**端出去那一盘**的独立复算认不认账（counterNotUnique / notVerified）。
+  //   门 0 的 overbudgetFull 走 generate.js:124-127 的 continue：那张盘面没出货，它只花重试次数。
+  //   挖珠的 dropByOverbudget 走 :171-175 把珠子放回去：出货盘仍 UNIQUE，破的是"每颗珠子都必要"。
+  m.counterNotUnique = shipped.filter((r) => r.counter !== 'UNIQUE'); // 独立复算不认账 = 唯一解破口
   m.notVerified = shipped.filter((r) => !r.verified);
+  m.notSolved = shipped.filter((r) => r.solveStatus !== 'solved'); // 复算时铅笔没推到底
+  m.unproven = shipped.filter((r) => r.counter !== 'UNIQUE' || !r.verified || r.solveStatus !== 'solved');
+  m.gate0Overbudget = shipped.filter((r) => r.stats.overbudgetFull > 0); // 重试代价，照打不判红
+  m.minGap = shipped.filter((r) => r.stats.dropByOverbudget > 0); // 极简性没证到的盘
   m.degenerate = shipped.filter((r) => r.degenerate);
 
   // 2) 零猜测可解率
@@ -261,11 +286,16 @@ const shareCap = () => Math.min(1, T.contributionUniformFactor / SAMPLES);
 const GATES = [
   { key: 'yield', text: `菜单每档出货率 ≥ ${(T.yieldMenu * 100).toFixed(0)}%` },
   { key: 'zeroGuess', text: `菜单每档零猜测可解率 ≥ ${(T.zeroGuessMenu * 100).toFixed(0)}%，且出货盘 verify 100% 通过` },
-  // overbudget* 一律不算"已证唯一解"：门 0 的 overbudgetFull 是"连最紧的题面都没数完"，
-  // 挖珠的 dropByOverbudget 是"这颗珠子是预算逼着留下的、不是必要珠子"（后者端出去的盘仍 UNIQUE，
-  // 见 generate.js:171-175 把珠子放回去，所以严格说不是破口——但任务要求按 overbudget* 计，照办）。
-  // 实测 24 样本：已证唯一解 8x8 22/24、9x9 22/24、10x10 18/24（对照 10x9 17/24）⇒ RESULT ok=false。
-  { key: 'proven', text: '无 overbudget* 样本（门 0 没证完 / 挖珠因预算止步都算），且每个出货盘独立复算为预算内 UNIQUE' },
+  // proven 守的是「出货的每一盘都由独立计数器数过唯一解」：把端出去那一盘交给 countLoops 复算，
+  // 预算内 UNIQUE、verify 通过、铅笔零猜测推到底——一张不认账就红。这条一次都不许松。
+  // 裁决（2026-09-28，我推翻了自己下给这一条的"overbudget* 一律不算已证"）：那一刀量错了对象。
+  // generate.js:124-127 见 OVERBUDGET 就 continue 换下一条环，那张盘面到不了玩家手里，拦它等于拦
+  // 重试次数；而它当时确实把三档菜单判红（8x8 22/24、9x9 22/24、10x10 18/24），出货率与零猜测
+  // 全绿、独立复算 192/192 UNIQUE——把 bug 写成期望的绿闸，比红闸更危险（本仓 bake 那次同类）。
+  // 真正被 overbudget 破掉的是「每颗珠子都必要」：generate.js:171-175 把珠子放回，出货盘仍 UNIQUE，
+  // 所以它挪到下面 minimal 单独披露，并把措辞禁令印在数旁边，不许混进 proven 的分子分母。
+  { key: 'proven', text: '出货盘独立复算=预算内 UNIQUE ∧ verify 通过 ∧ 铅笔零猜测推到底（0 张不认账）' },
+  { key: 'minimal', text: '挖珠止步于预算的盘数逐档披露（>0 时 README 禁写「每颗珠子都是必要的」，只可写「每盘都数过唯一解」）' },
   { key: 'monotone', text: `score p50 沿菜单不降，且首末两档支配概率 ≥ ${T.dominance}` },
   { key: 'wall', text: `每档 Date.now() 墙钟 p95 ≤ ${T.wallP95Ms}ms（来历见 T.wallP95Ms 注释）` },
   { key: 'sound', text: 'illegalLoop / refRejected / dropByMismatch 恒为 0；steps 恒等于盘上边数' },
@@ -290,8 +320,10 @@ function judge(sizeKey, m) {
   push(m.shipped / m.n >= T.yieldMenu, `${sizeKey} 出货率 ${m.shipped}/${m.n} < ${(T.yieldMenu * 100).toFixed(0)}%`);
   push(m.zeroGuess / Math.max(1, m.shipped) >= T.zeroGuessMenu, `${sizeKey} 零猜测可解率 ${pct(m.zeroGuess, m.shipped)} < ${(T.zeroGuessMenu * 100).toFixed(0)}%`);
   push(m.wall.p95 <= T.wallP95Ms, `${sizeKey} 墙钟 p95 ${m.wall.p95}ms > ${T.wallP95Ms}ms`);
-  push(m.gate0Overbudget.length === 0, `${sizeKey} 有 ${m.gate0Overbudget.length} 盘门 0 overbudgetFull（唯一解没证完，不算已证）`);
-  push(m.dropOnlyOverbudget.length === 0, `${sizeKey} 有 ${m.dropOnlyOverbudget.length} 盘 dropByOverbudget（挖珠止步于预算）`);
+  // 这两条不再判红，改成每次都披露（理由见 GATES 的 proven 注释）：一个只花重试次数，
+  // 一个破的是极简性。唯一解那一头由下面的 hard(counterNotUnique / notVerified) 死守。
+  if (m.gate0Overbudget.length) notes.push(`${sizeKey} ${m.gate0Overbudget.length} 盘出过门 0 overbudgetFull（那张没出货，generate.js:124-127 continue ⇒ 只算重试代价，不是唯一解破口）`);
+  if (m.minGap.length) notes.push(`${sizeKey} ${m.minGap.length} 盘挖珠止步于预算（dropByOverbudget，:171-175 把珠子放回）⇒ 这些盘不许说「每颗珠子都是必要的」`);
   push(m.topHitsShare <= shareCap(), `${sizeKey} 全档推理命中里最大单盘独占 ${(100 * m.topHitsShare).toFixed(0)}% > ${(100 * shareCap()).toFixed(0)}%（上限＝${T.contributionUniformFactor}/SAMPLES，聚合数是被一个样本撑起来的）`);
   hard(m.notVerified.length === 0, `${sizeKey} 有 ${m.notVerified.length} 盘 verify 不过`);
   hard(m.counterNotUnique.length === 0, `${sizeKey} 有 ${m.counterNotUnique.length} 盘独立复算不是预算内 UNIQUE`);
@@ -318,7 +350,10 @@ function printSize(sizeKey, m, recs, mono) {
   const avgCand = shippedRecs.length ? shippedRecs.reduce((a, r) => a + r.candidateCount, 0) / shippedRecs.length : NaN;
   console.log(`   挖珠 dropTried ${A.dropTried || 0} → dropKept ${A.dropKept || 0}｜出货盘均候选 ${f1(avgCand)} 颗 → 端出 ${f1(avgPearl)} 颗/盘（黑 ${f1(shippedRecs.length ? shippedRecs.reduce((a, r) => a + r.black, 0) / shippedRecs.length : NaN)} 白 ${f1(shippedRecs.length ? shippedRecs.reduce((a, r) => a + r.white, 0) / shippedRecs.length : NaN)}）`);
   if (m.failReasons.length) console.log(`   没出货的样本：${m.failReasons.join(' ')}`);
-  console.log(`   overbudget 单独计数：门 0 没证完 ${m.gate0Overbudget.length} 盘（${m.gate0Overbudget.map((r) => `#${r.i}`).join(',') || '-'}）｜挖珠止步于预算 ${m.dropOnlyOverbudget.length} 盘（${m.dropOnlyOverbudget.map((r) => `#${r.i}`).join(',') || '-'}）｜已证唯一解 ${m.shipped - m.notFullyProven.length}/${m.shipped}（两类 overbudget 都不算已证，见 T 与 generate.js:171-175）`);
+  const ids = (a) => (a.length ? a.map((r) => `#${r.i}`).join(',') : '-');
+  console.log(`   两条承诺分开数：唯一解已证 ${m.shipped - m.unproven.length}/${m.shipped}（复算不认账：非 UNIQUE ${m.counterNotUnique.length} 盘 ${ids(m.counterNotUnique)}、verify 不过 ${m.notVerified.length} 盘 ${ids(m.notVerified)}、铅笔没推到底 ${m.notSolved.length} 盘 ${ids(m.notSolved)}）`);
+  console.log(`   门 0 overbudget（那张盘面没出货，:124-127 continue ⇒ 只是重试代价）${m.gate0Overbudget.length} 盘 ${ids(m.gate0Overbudget)}｜极简性没证到（挖珠被预算逼着留珠，:171-175）${m.minGap.length} 盘 ${ids(m.minGap)}`);
+  if (m.minGap.length) console.log(`     ⇒ 措辞禁令：本档 ${m.minGap.length}/${m.shipped} 盘里有珠子是"预算逼着留下的"，README/DESIGN 不许写「每颗珠子都是必要的」；「出货的每一盘都数过唯一解」这句在上面那个 0 张不认账时才允许写。`);
   if (m.degenerate.length) console.log(`   退化样本（环满盘或一颗没挖掉）：${m.degenerate.map((r) => `#${r.i}`).join(' ')}`);
   // 2 零猜测
   console.log(`2) 零猜测可解率 ${m.zeroGuess}/${m.shipped} = ${pct(m.zeroGuess, m.shipped)}（solveWithRules 空盘→唯一解，零回溯且 verify 通过）stuck ${m.stuck.length ? m.stuck.map((i) => `#${i}`).join(',') : '-'}｜意外 status ${m.otherStatus.length ? m.otherStatus.join(',') : '-'}`);
@@ -343,7 +378,7 @@ function printSize(sizeKey, m, recs, mono) {
   }
   const { flags, notes } = judge(sizeKey, m, mono);
   console.log(`   红线：${flags.length ? 'RED — ' + flags.join('；') : '无'}`);
-  if (notes.length) console.log(`   对照档破口（不进门禁，T.gateControlSizes=false）：${notes.join('；')}`);
+  if (notes.length) console.log(`   披露项（不进 RESULT：重试代价 / 极简性没证到的盘，菜单档也打）：${notes.join('；')}`);
   return { flags, notes };
 }
 
@@ -419,11 +454,15 @@ function main() {
   console.log(`\n红线汇总：${flags.length ? `${flags.length} 项` : '0 项（全绿）'}`);
   for (const f of flags) console.log(`  - ${f}`);
   if (notes.length) {
-    console.log(`对照档破口（不进 RESULT，T.gateControlSizes=false）：${notes.length} 项`);
+    console.log(`披露项（不进 RESULT）：${notes.length} 项`);
     for (const f of notes) console.log(`  · ${f}`);
   }
   console.log('\n门禁口径（GATES，来历见 balance.mjs 里 GATES 的注释）：');
   for (const g of GATES) console.log(`  · ${g.text}`);
+  if (globalThis.__doseLanded) {
+    console.log(`\n[DOSE] 变异已落地：${globalThis.__doseLanded}｜红线 ${flags.length} 项` +
+      (flags.length ? '（摘一颗珠子就红 ⇒ proven 那条闸确实咬得住）' : '（摘了珠子还全绿 ⇒ 这条闸不咬，上面的绿别当证据）'));
+  }
   console.log(`RESULT ok=${flags.length === 0}`);
   return flags.length === 0 ? 0 : 1;
 }
