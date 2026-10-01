@@ -11,8 +11,16 @@
 html, body {
   margin: 0;
   min-height: 100%;
-  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 62%, var(--surface) 100%);
+  /* 两层：生成式织纹（assets/gen/gen_art.py 的 board_texture，256px 无缝平铺）压在竖向渐变上，
+     用 soft-light 混——直接铺满会让整页发灰，不铺就是白留一张图。织纹本身是 field ±4 的经纬噪声，
+     所以混出来的仍然是这一套深色，只是不再是塑料。 */
+  background-image:
+    url('../art/board-texture.png'),
+    linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 62%, var(--surface) 100%);
+  background-repeat: repeat, no-repeat;
+  background-size: 256px 256px, cover;
   background-attachment: fixed;
+  background-blend-mode: soft-light;
   color: var(--ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
@@ -23,11 +31,19 @@ body { touch-action: manipulation; }
 #app {
   max-width: 1120px;
   margin: 0 auto;
-  padding: var(--space-page) var(--space-page) var(--space-inner);
+  /* 四边都叠上 env(safe-area-inset-*)：viewport-fit=cover 让画面铺到刘海后面，
+     那么不读 env() 就等于把顶栏压进刘海、把页脚压在 Home 条下面。env() 在没有刘海的机器上
+     恒为 0，所以这一串 calc 在非 iOS 上与原样等价。 */
+  padding:
+    calc(var(--space-page) + env(safe-area-inset-top))
+    calc(var(--space-page) + env(safe-area-inset-right))
+    calc(var(--space-page) + env(safe-area-inset-bottom) + var(--space-inner))
+    calc(var(--space-page) + env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: var(--space-card);
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -68,7 +84,7 @@ body { touch-action: manipulation; }
   text-transform: uppercase;
 }
 
-.top-actions { display: flex; gap: var(--space-gutter); }
+.top-actions { display: flex; flex-wrap: wrap; gap: var(--space-gutter); justify-content: flex-end; }
 
 button {
   font: inherit;
@@ -78,6 +94,10 @@ button {
   border: 1px solid var(--line);
   background: var(--surface);
   padding: 10px 16px;
+  /* 44×44 是拇指的下限，不是审美选择：这一排（暂停／音效／全屏／动效）与画笔三枚都在盘旁边，
+     按不到就等于这一局推不下去。min-width 一起给，短标签（「暂停」两个字）不会被压成一条缝。 */
+  min-height: 44px;
+  min-width: 44px;
   transition: background var(--dur-tap) var(--ease-ease), border-color var(--dur-tap) var(--ease-ease), transform var(--dur-tap) var(--ease-spring);
 }
 
@@ -116,6 +136,8 @@ select {
   border: 1px solid var(--line-heavy);
   border-radius: var(--radius-chip);
   padding: 2px 6px;
+  min-height: 44px;
+  max-width: 100%;
 }
 
 /* ---------- layout ---------- */
@@ -157,18 +179,30 @@ select {
 
 #board-wrap {
   position: relative;
-  display: flex;
+  /* 同格叠放：#board 与 #fx 都在 1/1 这一格，所以反馈层与盘面天然逐像素对齐——
+     用 JS 量偏移去摆它，等于把「涟漪偏一格」这种事故请进家门。 */
+  display: grid;
+  grid-template-columns: minmax(0, max-content);
   justify-content: center;
-  align-items: flex-start;
+  align-content: start;
   min-height: 260px;
 }
 
 #board {
   display: block;
+  grid-area: 1 / 1;
   border-radius: var(--radius-card);
   background: var(--surface);
   touch-action: none;
   cursor: crosshair;
+}
+
+/* 涟漪与粒子画在这上面。pointer-events:none 是硬要求：它盖在盘上，能吃点击就等于
+   凭空多出一层输入，玩家那一笔会莫名其妙地断在半路。 */
+#fx {
+  grid-area: 1 / 1;
+  pointer-events: none;
+  border-radius: var(--radius-card);
 }
 #board:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }
 
@@ -188,7 +222,8 @@ select {
 
 @keyframes veil-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  #win-veil { animation: none; }
+  #win-veil, #pause-veil { animation: none; }
+  #fx { display: none; }
   * { transition-duration: 1ms !important; }
 }
 
@@ -204,6 +239,35 @@ select {
 .win-card p { margin: 4px 0; color: var(--ink-dim); font-size: 13px; }
 .win-card .win-note { font-size: 11px; }
 .win-actions { display: flex; gap: var(--space-gutter); justify-content: center; margin-top: 12px; }
+
+/* 暂停盖层。与胜利盖层同构，但描边是冷色 info：暂停不是胜利，颜色不许骗人。
+   它平时 hidden，靠最前面那条 [hidden]{display:none!important} 真的退出命中测试。 */
+#pause-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-inner);
+  /* 半透明深色压在织纹之上：盖层是一块布，不是纯黑纱——但盘面的形状仍然透得出来，
+     暂停不该把玩家刚画的东西藏掉。 */
+  background:
+    linear-gradient(rgba(7, 10, 20, 0.82), rgba(7, 10, 20, 0.82)),
+    url('../art/board-texture.png') repeat;
+  border-radius: var(--radius-card);
+}
+#pause-veil[hidden] { display: none; }
+
+.pause-card {
+  max-width: 320px;
+  padding: var(--space-card);
+  border: 1px solid var(--info);
+  border-radius: var(--radius-card);
+  background: var(--surface-lift);
+  text-align: center;
+}
+.pause-card h3 { margin: 0 0 8px; font-size: 17px; }
+.pause-card p { margin: 4px 0; color: var(--ink-dim); font-size: 13px; }
+.pause-card .pause-note { font-size: 11.5px; color: var(--ink-faint); }
 
 .state-line {
   margin: 0;
