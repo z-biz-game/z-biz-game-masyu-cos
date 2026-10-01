@@ -1,0 +1,35 @@
+{
+ "version": "masyu-art-1",
+ "seed": 20261002,
+ "palette": {
+  "bgTop": "#070A14",
+  "bgBottom": "#121A2C",
+  "surface": "#0F1526",
+  "line": "#243050",
+  "field": "#1C2740",
+  "gridLine": "#0E1424",
+  "accent": "#FFC85C",
+  "accentEdge": "#FFE3A6",
+  "ink": "#F2F5FB",
+  "info": "#7BB8FF",
+  "success": "#3DDC91",
+  "pearlBlack": "#05070D",
+  "pearlWhite": "#F2F5FB",
+  "cutMark": "#8298C4"
+ },
+ "files": {
+  "icons/icon-1024.png": 1024,
+  "icons/icon-512.png": 512,
+  "icons/icon-192.png": 192,
+  "icons/icon-180.png": 180,
+  "icons/icon-96.png": 96,
+  "icons/icon-48.png": 48,
+  "icons/favicon-32.png": 32,
+  "icons/favicon-16.png": 16,
+  "icons/icon-maskable-512.png": 512,
+  "icons/icon-maskable-192.png": 192,
+  "art/board-texture.png": 256,
+  "art/fx-sprites.png": "512x128",
+  "art/og.png": "1200x630"
+ }
+}
