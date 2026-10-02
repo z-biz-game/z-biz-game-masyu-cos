@@ -15,8 +15,6 @@
     "check": "for f in js/*.js js/*/*.js js/*/*/*.js tools/*.mjs; do [ -e \"$f\" ] || continue; node --check \"$f\" || exit 1; done; node --check server.cjs && node --check electron/main.cjs && node --check electron/preload.cjs && node --check tools/playtest.cjs && node --check tools/scenarios.js && bash -n tools/verify.sh && echo 'OK check'",
     "test": "node tools/rule-test.mjs && node tools/pencil-test.mjs && node tools/counter-test.mjs && node tools/generator-probe.mjs",
     "probe": "node tools/loop-probe.mjs",
-    "frame": "node tools/frame-harness.mjs",
-    "frame:neg": "node tools/frame-harness.mjs 3 --neg",
     "probe:generator": "node tools/generator-probe.mjs",
     "balance": "node tools/balance.mjs",
     "verify": "bash tools/verify.sh"
