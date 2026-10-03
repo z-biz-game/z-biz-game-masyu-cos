@@ -67,6 +67,39 @@ case "$SERVED" in *js/main.js*) ;; *) echo "nothing served at $BASE (see /tmp/ma
 echo "$SERVED" | grep -q 数链 || { echo "port $HTTP is serving a different app, not 数链 Masyu" >&2; exit 2; }
 echo "$SERVED" | grep -qi masyu || { echo "port $HTTP is serving a different app, not 数链 Masyu" >&2; exit 2; }
 
+# ---------------------------------------------------------------------------
+# 逻辑段：两道文档诚实闸，跑在 Chrome 起来之前。
+# 顺序是这道闸的定义的一部分：浏览器那条腿红不红、这台机器快不快，都不该让「文档抄着一个已经
+# 不存在的数」变成看不见的东西。两道闸的 rc 折进 LOGIC_FAILED，末尾交给 FAILED 继续累加。
+# 期望表 DOCTEST_EXPECT_* / SABOTAGE_EXPECT_KNIVES 从闸自己打印的机器可读行（STAMP / KNIVES=）
+# 外面再钉一次：闸内自钉管「有没有少一条断言」，这里管「有没有人连钉本身都改小」。
+LOGIC_FAILED=0
+DOCTEST_EXPECT_GROUPS=18
+DOCTEST_EXPECT_ROWS=232
+SABOTAGE_EXPECT_KNIVES=4
+cd "$HERE"
+echo "=== 逻辑闸 tools/doctest.mjs（文档数字 == 代码 / balance / 四套纯 Node 闸的现跑）==="
+node tools/doctest.mjs >/tmp/masyu-doctest.log 2>&1
+DOCTEST_RC=$?
+grep -E '^  (FAIL|NOTE)|^STAMP|^合计' /tmp/masyu-doctest.log || echo "  doctest 一行都没打——这本身就是红"
+[ $DOCTEST_RC -eq 0 ] || LOGIC_FAILED=1
+DOCTEST_STAMP=$(grep -m1 '^STAMP ' /tmp/masyu-doctest.log || true)
+case "$DOCTEST_STAMP" in
+  *"subset=none"*) ;;
+  *) echo "  FAIL doctest 不是一次整闸跑（STAMP 缺失或 subset≠none：${DOCTEST_STAMP:-无}）——子集跑不许冒充全量" >&2; LOGIC_FAILED=1 ;;
+esac
+GOT_GROUPS=$(printf '%s' "$DOCTEST_STAMP" | sed -n 's/.*groups=\([0-9]*\).*/\1/p')
+GOT_ROWS=$(printf '%s' "$DOCTEST_STAMP" | sed -n 's/.*rows=\([0-9]*\).*/\1/p')
+[ "$GOT_GROUPS" = "$DOCTEST_EXPECT_GROUPS" ] || { echo "  FAIL doctest 这次只发了 ${GOT_GROUPS:-0} 组，期望 $DOCTEST_EXPECT_GROUPS 组（少一组就是有人删了/并了一组断言）" >&2; LOGIC_FAILED=1; }
+[ "$GOT_ROWS" = "$DOCTEST_EXPECT_ROWS" ] || { echo "  FAIL doctest 这次只发了 ${GOT_ROWS:-0} 项，期望 $DOCTEST_EXPECT_ROWS 项（断言变窄要同时改 tools/doctest.mjs 的 EXPECT_ROWS 和这一行，两处一起改才算说清楚）" >&2; LOGIC_FAILED=1; }
+echo "=== 逻辑闸 tools/sabotage.mjs（破坏试验台账：每一类谎都要把对应断言逼红）==="
+node tools/sabotage.mjs >/tmp/masyu-sabotage.log 2>&1
+SABOTAGE_RC=$?
+grep -E '^  (\[|幂等|对照)|^KNIVES=|^台账|^ -- 行不同' /tmp/masyu-sabotage.log || echo "  sabotage 一行都没打——这本身就是红" >&2
+[ $SABOTAGE_RC -eq 0 ] || LOGIC_FAILED=1
+GOT_KNIVES=$(grep -m1 '^KNIVES=' /tmp/masyu-sabotage.log | sed -n 's/.*KNIVES=\([0-9]*\).*/\1/p')
+[ "${GOT_KNIVES:-0}" = "$SABOTAGE_EXPECT_KNIVES" ] || { echo "  FAIL sabotage 报出 ${GOT_KNIVES:-0} 把刀，期望 $SABOTAGE_EXPECT_KNIVES 把（刀少了就是某一类谎不再被证明）" >&2; LOGIC_FAILED=1; }
+
 UDD=$(mktemp -d)
 "$CHROME" --headless=new --remote-debugging-port=$PORT --user-data-dir=$UDD \
   --window-size=900,980 --no-first-run --no-default-browser-check about:blank >/tmp/masyu-chrome.log 2>&1 &
@@ -105,7 +138,7 @@ done
 echo "boot: masyu $BOOT at $BASE"
 case "$BOOT" in NOAPP*|nomasyu*|ERROR*|"") echo "window.masyu.game never appeared at $BASE" >&2; exit 4 ;; esac
 
-FAILED=0
+FAILED=$LOGIC_FAILED   # 逻辑段（doctest / sabotage）的 rc 从这里接手，浏览器那几条腿在它上面继续累加
 # marks → resume 是一对，顺序不能换：前一场用真指针画叉并让页面存盘，后一场在**下一次真导航**
 # 之后核对「叉还在、步数不是 0」。同一个 Chrome profile 里 localStorage 是留得住的，
 # 所以「刷新」这一步不需要假的模拟。

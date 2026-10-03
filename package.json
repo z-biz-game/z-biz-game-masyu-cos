@@ -17,6 +17,8 @@
     "probe": "node tools/loop-probe.mjs",
     "probe:generator": "node tools/generator-probe.mjs",
     "balance": "node tools/balance.mjs",
+    "doctest": "node tools/doctest.mjs",
+    "sabotage": "node tools/sabotage.mjs",
     "verify": "bash tools/verify.sh"
   },
   "keywords": [

@@ -124,7 +124,7 @@ sound 的定义很硬：一条规则只能宣布"某条边是 LOOP / 是 CUT"或
 引擎里等于按格数说话**。
 
 `no-2x2-square`（`:347-376`，来历注释 `:344-346`）留在第八条位置，但它在 192 张出货盘上一次都没命中；进一步拿 24 张 8×8
-逐步查它的前件（某个 2×2 已有三条环边、第四条未定），**2712 步里前件成立 0 次**。它 sound 也 selective
+逐步查它的前件（某个 2×2 已有三条环边、第四条未定），**2688 步里前件成立 0 次**。它 sound 也 selective
 （`rule-test`：发 2 / contra 1 / 静 3），只是生成盘的形状从不给它开口的机会——所以"十条规则"在出货盘上
 实际只用九条，而它对难度分数的贡献是 0（`RULE_WEIGHT` 里那条 4 分永远乘不上）。
 
@@ -160,7 +160,7 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 全部指名 10x10 那一盘；`--dose=minimal` 只把门 2 关掉 ⇒ minimal 那侧红 2 项（9x9 1/24 盘、10x10 5/24 盘，
 超预算无数 6+11 颗），而八档出货率、零猜测、三本账照旧全绿——它红的那件事只有这一条线看得见。
 
-## 8. 门禁：五层，各挡一种说谎
+## 8. 门禁：六层，各挡一种说谎
 
 | 层 | 命令 | 挡的是什么谎 |
 |---|---|---|
@@ -169,6 +169,7 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 | 计数器 | `node tools/counter-test.mjs`（五节） | 两套实现的语义漂移；OVERBUDGET 混进货架 |
 | 出货 | `node tools/generator-probe.mjs`、`npm run balance` | 账目不轧平（`illegalLoop`/`refRejected`/`dropByMismatch` 不为 0）；难度表说谎 |
 | 屏幕 | `bash tools/verify.sh`（99 项） | 引擎里对、屏幕上错：画偏一列、参考环漏到盘上、胜利卡片吃掉点击 |
+| 文档 | `node tools/doctest.mjs` + `node tools/sabotage.mjs` | 文档抄的是一个已经不存在的数：档位、断言数、难度表逐格、端口、`文件:行号` 引用——期望值一律取代码现值，再用四把刀证明这道闸真的咬得住 |
 
 浏览器那层的纪律写在 `tools/scenarios.js:1-16`：**只认 DOM 矩形、画布像素、真指针事件的读数**；
 `.hidden` 说的是代码想干什么，一个 rect 和一个像素才是玩家拿到了什么。坐标两批绝不能混——
@@ -176,7 +177,7 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 同一批数），`PointerEvent`/`elementFromPoint` 要 client 坐标（走 `clientOf()`）。拿错那一批会在盘宽之外
 的面板底色上"量"出一个绿。
 
-顺序上有两条硬要求（`tools/verify.sh:109-112`）：`marks → resume` 是一对，前一场用真指针画叉并存盘，
+顺序上有两条硬要求（`tools/verify.sh:142-145`）：`marks → resume` 是一对，前一场用真指针画叉并存盘，
 后一场在**下一次真导航**之后核对"叉还在、步数不是 0"；`hint` 必须排最后，因为它会赢一局，而赢会
 `clearResume`——排前面就把 resume 那场的存档吃掉了，两场都绿但什么都没测。
 
@@ -200,7 +201,7 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 5. **提示次数不入账**：`Store.recordSolve(elapsedMs, moves)`（`js/store.js:110`）只累计 solved / moves / ms，
    `totals` 里没有"用过几次提示"，而提示落的那一笔是进步数的。所以本仓**没有**"无提示通关"的纪录口径，
    README 里也就没写。
-6. **CI 里没有浏览器闸、也没有 balance**（`.github/workflows/ci.yml` 只跑 `check` + 四套纯 Node）：
+6. **CI 里没有浏览器闸、也没有 balance**（`.github/workflows/ci.yml` 只跑 `check` + 四套纯 Node + doctest + sabotage）：
    99 项屏幕门禁和难度红线是本地跑的，CI 挡不住"引擎对、屏幕错"。balance 不进 CI 是有意的取舍而不是
    忘了：它有一条**绝对毫秒**红线（每档墙钟 p95 ≤ 8000ms），挪到共享 runner 上就变成了"今天这台机器
    快不快"的投票，红了没人知道是引擎退化还是抢核。要么把那条线挪成比值（p95/p50），要么先给 CI 一台
@@ -208,5 +209,5 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 7. **难度只有总体口径**：p50/p95 是 24 个样本的分位数；同一档内部没有分级，也没有把"这盘比上盘难"
    说给玩家听的东西。分数是 `balance.mjs` 自定义度量（权重是人给的），不是引擎出口——想把它做成产品
    读数，就得把 `RULE_WEIGHT` 从工具挪进引擎并让测试钉住。
-8. **10×10 以上没量过**：`SIZE_TABLE` 只有七个键、菜单五个，`balance` 八档。别把"没测"读成"能出"，
+8. **10×10 以上没量过**：`SIZE_TABLE` 只有八个键、菜单五个，`balance` 八档。别把"没测"读成"能出"，
    也别反过来把这一句抄成"更大出不了"——本仓没有 `UNSHIPPABLE` 那一张表。
