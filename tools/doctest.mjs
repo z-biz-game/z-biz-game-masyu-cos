@@ -772,17 +772,37 @@ if (want('D17')) {
   ok(depKeys.length === 0 && dev.length === 1 && dev[0] === 'electron' && /运行时零依赖/.test(README),
     `D17a 运行时零依赖：dependencies ${depKeys.length} 项 / devDependencies [${dev}]（README 那句「只有 devDependencies 的 Electron」）`,
     `deps=[${depKeys}] dev=[${dev}]`);
-  const copies = [...PAGES.matchAll(/cp (?:-r )?([^\n]+?) _site\/?/g)].flatMap((m) => m[1].trim().split(/\s+/));
-  ok(copies.length === 3 && copies.includes('index.html') && copies.includes('css') && copies.includes('js') && !copies.includes('tools'),
-    `D17b pages.yml 拷进 artifact 的就是 index.html+css+js 三项、tools 不进站点（README 那句有 yml 背书）`, copies.join('/'));
+  // 拷贝清单的出处只许有一个。旧形状是 pages.yml 手抄 `cp` 行；新形状是 pages.yml 调
+  // tools/assemble-site.sh，那份清单同时被本地部署集闸拿去拷临时目录——上线那份与验的那份于是同一份。
+  // 两处都在说"拷哪些"就是清单分家（这一轮的坏法本身），所以先数出处，再把数出来的集合与
+  // README 点名的集合逐字比；集合相等是等式，不是"包含 index.html 就算绿"。
+  const cpArgs = (l) => l.trim().split(/\s+/)
+    .filter((t) => t !== '-r' && !t.includes('$') && !t.includes('_site'))
+    .map((t) => t.replace(/"/g, '').replace(/\/$/, '')).filter(Boolean);
+  const cpOf = (text, dest) => [...text.matchAll(/^[ \t]*cp (.+)$/gm)].map((m) => m[1])
+    .filter((l) => l.includes(dest)).flatMap(cpArgs);
+  const ASSEMBLE_SRC = existsSync(join(ROOT, 'tools/assemble-site.sh')) ? read('tools/assemble-site.sh') : '';
+  const handCp = cpOf(PAGES, '_site');
+  const scriptCp = cpOf(ASSEMBLE_SRC, '$DEST');
+  const loopDirs = /^\s*for d in ([^;]+); do/gm.test(ASSEMBLE_SRC) && /\[ -d "\$d" \] && cp -r "\$d"/.test(ASSEMBLE_SRC)
+    ? [...ASSEMBLE_SRC.matchAll(/^\s*for d in ([^;]+); do/gm)].flatMap((m) => m[1].trim().split(/\s+/))
+      .filter((d) => existsSync(join(ROOT, d)))
+    : [];
+  const sources = [scriptCp.length ? 'tools/assemble-site.sh' : '', handCp.length ? 'pages.yml 的 cp 行' : ''].filter(Boolean);
+  const copies = [...new Set(sources.length === 1 ? scriptCp.concat(handCp, loopDirs) : [])].sort();
+  const docDecl = ((README.match(/站点里现在是：([^\n]*?)——/) || ['', ''])[1]).trim().split(/\s+/)
+    .map((t) => t.replace(/`/g, '')).filter(Boolean).sort();
+  ok(copies.length > 0 && copies.join(' ') === docDecl.join(' ') && !copies.includes('tools'),
+    `D17b 拷进 artifact 的清单只有一处（${sources.join(' 与 ') || '没有出处'}）：数出来 ${copies.length} 项 == README 点名的 ${docDecl.length} 项，tools 不在其中`,
+    `${sources[0] || '?'} → ${copies.join(' + ')}`);
   ok(!/golden/i.test(SCEN) && !existsSync(join(ROOT, 'tools/fixtures')) && /没有 golden 夹具/.test(README),
     `D17c「这一仓没有 golden 夹具」成立（scenarios.js 里没有冻结答案表，tools/ 下也没有 fixtures 目录）`,
     `scenarios 命中=${/golden/i.test(SCEN)} · tools/fixtures=${existsSync(join(ROOT, 'tools/fixtures'))}`);
   ok(PKG.type === 'module' && !/require\(/.test(PENCIL_SRC + GEN_SRC) && /<script type="module"/.test(HTML),
     `D17d 引擎是 plain ES 模块（package.json type=${PKG.type}、index.html 用 type="module"、引擎里没有 require）`,
     `type=${PKG.type} · 引擎 require=${/require\(/.test(PENCIL_SRC + GEN_SRC)} · html module=${/<script type="module"/.test(HTML)}`);
-  ok(/`tools\/` 不进站点/.test(README) && !/tools/.test(copies.join(' ')), `D17e「tools/ 不进站点」这句与 pages.yml 的拷贝清单一致`,
-    `清单 ${copies.join('/' )}`);
+  ok(/`tools\/` 不进站点/.test(README) && !copies.some((c) => c === 'tools' || c.startsWith('tools/')),
+    `D17e「tools/ 不进站点」这句与清单（${sources[0] || '没有出处'}）一致`, `清单 ${copies.join(' + ')}`);
 }
 
 // ---- D18 自数：这道闸自己发出的组数与项数都钉死 —— 删一条 test/少解析一行就是这里红 ----
