@@ -169,7 +169,7 @@ randomLoop ──▶ candidatesOf（全合法放珠位置）
 | 计数器 | `node tools/counter-test.mjs`（五节） | 两套实现的语义漂移；OVERBUDGET 混进货架 |
 | 出货 | `node tools/generator-probe.mjs`、`npm run balance` | 账目不轧平（`illegalLoop`/`refRejected`/`dropByMismatch` 不为 0）；难度表说谎 |
 | 屏幕 | `bash tools/verify.sh`（99 项） | 引擎里对、屏幕上错：画偏一列、参考环漏到盘上、胜利卡片吃掉点击 |
-| 文档 | `node tools/doctest.mjs` + `node tools/sabotage.mjs` | 文档抄的是一个已经不存在的数：档位、断言数、难度表逐格、端口、`文件:行号` 引用——期望值一律取代码现值，再用四把刀证明这道闸真的咬得住 |
+| 文档 | `node tools/doctest.mjs` + `node tools/sabotage.mjs` | 文档抄的是一个已经不存在的数：档位、断言数、难度表逐格、端口、`文件:行号` 引用——期望值一律取代码现值，再用十八把刀（十八个组一组一把）证明这道闸真的咬得住 |
 
 浏览器那层的纪律写在 `tools/scenarios.js:1-16`：**只认 DOM 矩形、画布像素、真指针事件的读数**；
 `.hidden` 说的是代码想干什么，一个 rect 和一个像素才是玩家拿到了什么。坐标两批绝不能混——

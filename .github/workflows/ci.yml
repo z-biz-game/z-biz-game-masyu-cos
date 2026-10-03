@@ -52,9 +52,9 @@ jobs:
       - name: Doctest (文档数字 == 代码 / 现跑读数)
         run: node tools/doctest.mjs
 
-      # 破坏试验台账：把四类谎一类一类塞回代码，证明上面那道闸真的会红、且红在它点名的那一条上，
+      # 破坏试验台账：把十八类谎一类一类塞回代码（十八个组一组一把），证明上面那道闸真的会红、且红在它点名的那一条上，
       # 再把台账跑两遍证明自钉幂等。它只在干净 checkout 上跑（CI 永远是）。
-      - name: Sabotage ledger (4 把刀各自逼红点名的断言)
+      - name: Sabotage ledger (18 把刀各自逼红点名的断言)
         run: node tools/sabotage.mjs
 
       - name: Entry files exist

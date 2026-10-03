@@ -76,7 +76,7 @@ echo "$SERVED" | grep -qi masyu || { echo "port $HTTP is serving a different app
 LOGIC_FAILED=0
 DOCTEST_EXPECT_GROUPS=18
 DOCTEST_EXPECT_ROWS=232
-SABOTAGE_EXPECT_KNIVES=4
+SABOTAGE_EXPECT_KNIVES=18
 cd "$HERE"
 echo "=== 逻辑闸 tools/doctest.mjs（文档数字 == 代码 / balance / 四套纯 Node 闸的现跑）==="
 node tools/doctest.mjs >/tmp/masyu-doctest.log 2>&1

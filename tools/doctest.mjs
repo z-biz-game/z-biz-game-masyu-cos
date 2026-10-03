@@ -751,9 +751,9 @@ if (want('D15')) {
 // ---- D16 破坏试验台账：文档抄的刀数 == sabotage.mjs 的 KNIVES；每格 rc 是读回来的数字 ----
 if (want('D16')) {
   const sabSrc = existsSync(join(ROOT, 'tools/sabotage.mjs')) ? read('tools/sabotage.mjs') : '';
-  const knifeIds = [...sabSrc.matchAll(/id: '(K\d+)'/g)].map((m) => m[1]);
-  const groups = [...sabSrc.matchAll(/group: '(D\d+[a-z]?)'/g)].map((m) => m[1]);
-  ok(knifeIds.length >= 4, `D16a sabotage.mjs 里至少 4 把刀（当前 ${knifeIds.length} 把：${knifeIds.join(' ')}）`, `${knifeIds.length} 把`);
+  const heads = [...sabSrc.matchAll(/^    id: '(K\d+)', group: '(D\d+[a-z]?)'/gm)]; // 行首锚定：刀自己的 from/to 字面量里也写着 id/group，不锚定就会把刀数成 20 把
+  const knifeIds = heads.map((m) => m[1]), groups = heads.map((m) => m[2]);
+  ok(knifeIds.length >= 18, `D16a sabotage.mjs 里十八把刀一把不少（当前 ${knifeIds.length} 把：${knifeIds.join(' ')}）`, `${knifeIds.length} 把`);
   ok(new Set(groups).size === groups.length && groups.length === knifeIds.length,
     `D16b 每把刀打的是不同断言组（刀 ${knifeIds.length} 把 · 组 ${groups.join(' ')}）`, groups.join('/'));
   const knifeDoc = (README.match(/破坏试验台账（(\d+) 把刀）/) || [])[1];

@@ -157,7 +157,7 @@ node tools/balance.mjs --dose=minimal   → RESULT ok=false，红线 2 项
     `Store.resume()` 要返回 null、把那份存档就地清掉、并把原因写进 `resumeDiscarded`（"没有指纹"和
     "指纹不一致"分两种，两种都要验）。
 - `npm run doctest` —— **文档数字闸（18 组 / 232 项）**：README/DESIGN 里每一个代码能算出来的数（档位/键数/断言数/规则条数/权重/端口/难度表逐格/带宽/引用行号）都现场拿引擎与 `rule-test`/`pencil-test`/`counter-test`/`generator-probe`/`balance` 重算一遍再对表，期望值只取代码不取文档，文档抄错就在这里红。
-- `npm run sabotage` —— **破坏试验台账（4 把刀）**：把四类谎一类一类塞回代码，证明上面那道闸真的会红、而且红在文档点名的那条断言上；复原只用内存里的原始字节，不借 git。
+- `npm run sabotage` —— **破坏试验台账（18 把刀）**：把十八类谎一类一类塞回代码（doctest 的十八个组一组一把），证明上面那道闸真的会红、而且红在文档点名的那条断言上；复原只用内存里的原始字节，不借 git。
 - `npm run balance` —— 上面那张难度表 + 红线，退出码非 0 即红。`node tools/balance.mjs --quiet` 只打
   `RESULT ok=…` 一行给门禁用；`--dose=` 是变异剂量。
 - `bash tools/verify.sh` —— 真实 Chrome + CDP，只认三种证据：DOM 矩形、画布像素、真指针事件的读数。
