@@ -79,7 +79,7 @@ const KNIVES = [
     from: 'dominance: 0.85,', to: 'dominance: 0.86,',
     breaks: '把「支配概率」的门槛从 0.85 抬到 0.86（文档三处都还写着 0.85 与「门槛 0.85」）',
     assert: /^.*FAIL .*D4c 门槛三处同源.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K8', group: 'D5', file: 'tools/rule-test.mjs',
@@ -268,12 +268,17 @@ console.log('\n—— 第二遍（幂等核对）——');
 const second = runPass();
 const identical = first.lines.join('\n') === second.lines.join('\n');
 console.log(`\n幂等 stamping：两遍输出${identical ? '逐字节相同 ✓' : '不同 ✗'} · 刀数 ${second.ledger.length} · 本文件 rc 槽已钉成 ${KNIVES.map((k) => k.rc).join('/')}`);
-if (!identical) {
+// 过渡形状要说清楚：第一遍开跑前 rc 槽里还有 '?'，doctest 的 D16d 于是红，对照就把那批 FAIL 行
+// dump 进输出；盖章之后第二遍的对照是绿的、没有那段 dump，两遍的行数天然不等。这不是「自钉不幂等」，
+// 把它说成不幂等等于给下一个读日志的人编一个查无此病的病名。
+const transitional = first.ctl.rc !== 0 && second.ctl.rc === 0;
+if (!identical && !transitional) {
   const a = first.lines, b = second.lines;
   for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) console.log(`  第 ${i} 行不同：\n   一：${a[i]}\n   二：${b[i]}`);
 }
 
 if (problems.length) { console.log('\n台账不绿：'); for (const x of problems) console.log(`  - ${x}`); process.exit(1); }
+if (transitional) { console.log('台账不绿（过渡）：本文件刚被盖章改写，第一遍的对照红在没盖章的 rc 槽上。提交这一版再跑一遍——那时两遍必须逐字节相同。'); process.exit(1); }
 if (!identical) { console.log('台账不绿：两遍输出不一致（自钉不幂等）'); process.exit(1); }
 if (second.ctl.rc !== 0) { console.log('对照不绿：闸在干净树上是红的'); process.exit(1); }
 console.log(`\n台账全绿：${second.ledger.length} 把刀各自逼红了点名的断言，复原逐字节一致，两遍输出相同，干净树对照 doctest 绿。`);
