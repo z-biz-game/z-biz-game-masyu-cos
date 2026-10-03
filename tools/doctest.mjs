@@ -42,7 +42,7 @@ const want = (g) => ONLY.length === 0 || ONLY.includes(g);
 // 本闸自己的规模：组数与整闸跑的项数（= STAMP 那一行的 rows）。三处同钉：这里、README 抄的那句、
 // verify.sh 的 DOCTEST_EXPECT_*。删一条断言 → 这里红；偷偷把这里改小 → verify.sh 那两处红。
 const EXPECT_GROUPS = 18;
-const EXPECT_ROWS = 232;
+const EXPECT_ROWS = 233;
 
 // 「注释里写着没有 X」不等于「代码里没有 X」：判代码就得先把注释剥掉。
 const codeOnly = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');

@@ -75,7 +75,7 @@ echo "$SERVED" | grep -qi masyu || { echo "port $HTTP is serving a different app
 # 外面再钉一次：闸内自钉管「有没有少一条断言」，这里管「有没有人连钉本身都改小」。
 LOGIC_FAILED=0
 DOCTEST_EXPECT_GROUPS=18
-DOCTEST_EXPECT_ROWS=232
+DOCTEST_EXPECT_ROWS=233
 SABOTAGE_EXPECT_KNIVES=18
 cd "$HERE"
 echo "=== 逻辑闸 tools/doctest.mjs（文档数字 == 代码 / balance / 四套纯 Node 闸的现跑）==="
