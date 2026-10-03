@@ -54,6 +54,32 @@ const clock = () => baseElapsed + (startedAt ? Date.now() - startedAt : 0);
 function startClock() {
   if (!startedAt) startedAt = Date.now();
 }
+
+// ── 暂停 ────────────────────────────────────────────────────────────────
+// 暂停是**真冻结时钟**，不是挂个标签：暂停那一瞬把还在跑的那一段折进 baseElapsed，
+// 再把 startedAt 清零 —— clock() 于是恒等于 baseElapsed，一毫秒都不再涨。
+// 恢复时重新盖上 startedAt，时钟从冻结处续走；因为 baseElapsed 已经是累计值，
+// 恢复后第一帧的 dt 就是一个正常帧间隔，不会把暂停那几秒一次性吃掉（不跳步）。
+let paused = false;
+function setPaused(next) {
+  next = !!next;
+  if (paused === next) return paused;
+  if (next) {
+    baseElapsed = clock();   // 先结算到此刻，再停表
+    startedAt = 0;
+  } else {
+    startedAt = Date.now();
+  }
+  paused = next;
+  paintPause();
+  return paused;
+}
+function paintPause() {
+  const btn = $('btn-pause');
+  if (!btn) return;
+  btn.textContent = paused ? '继续' : '暂停';
+  btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+}
 function fmt(ms) {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -245,6 +271,8 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
   anchor = -1;
   baseElapsed = carry.elapsedMs || 0;
   startedAt = Date.now();
+  // 换一局＝新的一局，新局一定在走：带着上一局的 paused=true 进来会让时钟和按钮各说各话
+  if (paused) { paused = false; paintPause(); }
   relayout();
   render();
   persist();
@@ -405,6 +433,10 @@ window.addEventListener('keydown', async (ev) => {
   } else if (k === 'n' || k === 'N') {
     await newGame({});
     return;
+  } else if (k === 'p' || k === 'P') {
+    // 空格在本仓已经被"落一笔"占了（k === ' ' 那支），所以暂停只挂 P，不抢空格
+    setPaused(!paused);
+    return;
   } else return;
   render();
 });
@@ -428,6 +460,7 @@ $('btn-clear').addEventListener('click', () => {
   render();
   persist();
 });
+$('btn-pause').addEventListener('click', () => setPaused(!paused));
 $('btn-mode-loop').addEventListener('click', () => setMode('loop'));
 $('btn-mode-cut').addEventListener('click', () => setMode('cut'));
 $('btn-mode-erase').addEventListener('click', () => setMode('erase'));
@@ -495,6 +528,13 @@ window.masyu = {
   store: Store,
   palette: Palette,
   space: Space,
+  // —— 暂停：给闸台读的那张脸 ——
+  get paused() {
+    return paused;
+  },
+  setPaused,
+  /** 正在推进的那个数（毫秒）。暂停时它必须一毫秒不动 —— 这就是"真冻结"的判据。 */
+  simClock: () => clock(),
 };
 
 // ── 启动 ────────────────────────────────────────────────────────────────
