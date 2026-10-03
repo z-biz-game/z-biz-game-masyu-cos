@@ -64,7 +64,7 @@ const KNIVES = [
     from: "'no-2x2-square': 4,", to: "'no-2x2-square': 6,",
     breaks: '把 2×2 那条规则的权重从 4 分改成 6 分（README 的规则权重句写的就是「2×2 4 分」，代码一改文档就成了抄来的谎）',
     assert: /^.*FAIL .*D2i .*权重表现值.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K6', group: 'D3', file: 'tools/balance.mjs',
@@ -72,13 +72,13 @@ const KNIVES = [
     to: "const EXTRA_SIZES = Object.keys(SIZE_TABLE).filter((k) => !SIZES.includes(k) && k !== '7x6');",
     breaks: '让 balance 的档位全景少测一档（7x6 那组对照不再进 LADDER，难度表却还写着八行）',
     assert: /^.*FAIL .*D3b balance 的逐档明细解析到.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K7', group: 'D4', file: 'tools/balance.mjs',
     from: 'dominance: 0.85,', to: 'dominance: 0.86,',
     breaks: '把「支配概率」的门槛从 0.85 抬到 0.86（文档三处都还写着 0.85 与「门槛 0.85」）',
-    assert: /^.*FAIL .*D4c 门槛 0\.85 三处同源.*$/m,
+    assert: /^.*FAIL .*D4c 门槛三处同源.*$/m,
     rc: '?',
   },
   {
@@ -86,7 +86,7 @@ const KNIVES = [
     from: "check(extra.length === 0, '用例里没有已删除的规则', `多：${extra.join(', ')}`);\n", to: '',
     breaks: '删掉 rule-test 的一条断言（它现场报的「合计 N 条通过」立刻少 1，而文档抄的是删之前的条数）',
     assert: /^.*FAIL .*D5a rule-test 现跑.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K9', group: 'D7', file: 'tools/verify.sh',
@@ -94,7 +94,7 @@ const KNIVES = [
     to: 'for s in ${SCENARIOS:-boot render play marks resume hint extra}; do',
     breaks: '给默认场景序列加第七场却不回填 README 的六场分解（分解之和与合计就此对不上）',
     assert: /^.*FAIL .*D7a verify\.sh 的默认场景序列.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K10', group: 'D10', file: 'tools/scenarios.js',
@@ -102,7 +102,7 @@ const KNIVES = [
     to: '// （台账刀：临时在最前面插一行，让下面每一行的行号都漂 1）\n// 浏览器里的场景套件，由 tools/playtest.cjs 注入真实页面后跑。六个场景：',
     breaks: '在 scenarios.js 顶部插一行（文档为 gate-render-6 那一行写的 `tools/scenarios.js:NN` 立刻指到隔壁行）',
     assert: /^.*FAIL .*scenarios\.js:\d+」指的就是 gate-render-6 那一行.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K11', group: 'D11', file: 'js/engine/counter.js',
@@ -112,34 +112,34 @@ const KNIVES = [
     to: '',
     breaks: '把 counter.js 末尾三行删掉（文件短了 3 行，文档里那条 `js/engine/counter.js:125-315` 的引用就出了界）',
     assert: /^.*FAIL .*D11 每一条 path:NN 引用都落在真实文件的行数内.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K12', group: 'D12', file: 'tools/pencil-test.mjs', rename: 'tools/pencil-test.mjs.off',
     breaks: '把承诺表那一行点名的 tools/pencil-test.mjs 挪出树（这一组的靶面就是「文档点名的路径还在不在」，只能挪文件，不改内容）',
     assert: /^.*FAIL .*那一行点名的每一处 path 都在树里.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K13', group: 'D13', file: 'package.json',
     from: '"doctest": "node tools/doctest.mjs",', to: '"doctestOff": "node tools/doctest.mjs",',
     breaks: '把 package.json 的 doctest script 改名（npm run doctest 不再存在，D13 那句「两条 script 都在」就空了）',
     assert: /^.*FAIL .*D13a package\.json 有 doctest 与 sabotage.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K14', group: 'D14', file: 'tools/balance.mjs',
     from: 'wallP95Ms: 8000,', to: 'wallP95Ms: 8001,',
     breaks: '把那条绝对毫秒红线抬 1ms（DESIGN 写的「p95 ≤ 8000ms」与代码不再是同一个数——这一组不比现跑，比的正是这层同源）',
     assert: /^.*FAIL .*D14b 那条绝对毫秒红线在代码与文档里是同一个数.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K15', group: 'D15', file: 'tools/doctest.mjs',
     from: ', /boot 11 \\/ render 6/, false],', to: ', /boot 11 \\/ render 66/, false],',
     breaks: '把 unpinned 台账里 U4 那条 needle 改宽（正则一旦扑空，那条读数就从「还在文档里」变成没人看着——D15a 的反空转就是为这个写的）',
     assert: /^.*FAIL .*D15 U4「.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K16', group: 'D16', file: 'tools/sabotage.mjs',
@@ -149,14 +149,14 @@ const KNIVES = [
     to: "    id: 'K3', group: 'D6', " + "file: 'index.html',",
     breaks: '让两把刀打同一组（K3 的组名改成 D6，与 K2 撞车）——「一组一把」是这一组唯一的判据',
     assert: /^.*FAIL .*D16b 每把刀打的是不同断言组.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K17', group: 'D17', file: '.github/workflows/pages.yml',
     from: '          cp -r css js _site/', to: '          cp -r css js tools _site/',
     breaks: '往 pages 的拷贝清单里加一个 tools（README 那句「tools/ 不进站点」与 DESIGN 那句「三项」同时失去代码背书）',
     assert: /^.*FAIL .*D17b pages\.yml 拷进 artifact 的就是.*$/m,
-    rc: '?',
+    rc: '1',
   },
   {
     id: 'K18', group: 'D18', file: 'tools/doctest.mjs',
@@ -164,7 +164,7 @@ const KNIVES = [
     full: 1,
     breaks: '把本闸自己钉的项数悄悄改小 1（子集跑会 NOTE 掉自钉，所以这把必须整闸跑——那正是「删一条断言不改两处锁」这类谎的形状）',
     assert: /^.*FAIL .*D18b 本闸项数.*$/m,
-    rc: '?',
+    rc: '1',
   },
 ];
 

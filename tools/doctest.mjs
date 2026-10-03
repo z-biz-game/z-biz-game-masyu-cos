@@ -328,19 +328,19 @@ if (want('D4')) {
   if (BAL) {
     const mono = BAL.out.match(/区分力 P\(10x10 分数 > 6x6\) = ([\d.]+)（门槛 ([\d.]+)）；两档区间 6x6 \[(\d+)\.\.(\d+)\] vs 10x10 \[(\d+)\.\.(\d+)\]/);
     const docBand = README.match(/[（(]6×6 \[(\d+)\.\.(\d+)\] vs 10×10 \[(\d+)\.\.(\d+)\]/);
-    const docDom = README.match(/支配概率 ≥ 0\.85（本轮 ([\d.]+)）/);
+    const docDom = README.match(/支配概率 ≥ ([\d.]+)（本轮 ([\d.]+)）/), docGate = ONE.match(/（门槛 ([\d.]+)）/) || [];
     const domCode = BAL_SRC.match(/dominance: ([\d.]+)/);
     ok(!!mono && !!docBand, `D4a 现跑的单调性行与 README 的带宽句都解析到（解析不到就是措辞换了）`,
       `现跑 ${mono ? mono.slice(3, 7).join('/') : '未解析'} · 文档 ${docBand ? docBand.slice(1).join('/') : '未解析'}`);
     ok(!!mono && !!docBand && docBand.slice(1).join(',') === mono.slice(3, 7).join(','),
       `D4 分数带宽：文档 ${docBand ? `[${docBand[1]}..${docBand[2]}] vs [${docBand[3]}..${docBand[4]}]` : '未解析'} == 现跑 ${mono ? `[${mono[3]}..${mono[4]}] vs [${mono[5]}..${mono[6]}]` : '未解析'}`,
       `六个数逐格比 · 现跑 ${mono ? mono.slice(3, 7).join('/') : '?'}`);
-    ok(!!mono && !!docDom && +docDom[1] === +mono[1], `D4 支配概率文档 ${docDom ? docDom[1] : '未解析'} == 现跑 ${mono ? mono[1] : '未解析'}`,
+    ok(!!mono && !!docDom && +docDom[2] === +mono[1], `D4 支配概率文档 ${docDom ? docDom[2] : '未解析'} == 现跑 ${mono ? mono[1] : '未解析'}`,
       `现跑 P=${mono ? mono[1] : '?'}`);
-    ok(!!mono && !!domCode && +domCode[1] === +mono[2] && /门槛里的「支配概率」是 Mann-Whitney U 换算的 AUC/.test(README) &&
-      /门槛 0\.85/.test(ONE),
-      `D4c 门槛 0.85 三处同源：balance 现值 ${domCode ? domCode[1] : '?'} == 现跑 ${mono ? mono[2] : '?'} == 文档那句`,
-      `代码 dominance=${domCode ? domCode[1] : '?'} · 现跑 ${mono ? mono[2] : '?'}`);
+    ok(!!mono && !!domCode && +domCode[1] === +mono[2] && +docDom?.[1] === +domCode[1] && +docGate[1] === +domCode[1] &&
+      /门槛里的「支配概率」是 Mann-Whitney U 换算的 AUC/.test(README),
+      `D4c 门槛三处同源：balance 现值 ${domCode ? domCode[1] : '?'} == 现跑打印 ${mono ? mono[2] : '?'} == 文档两处（${docDom ? docDom[1] : '未解析'}/${docGate[1] || '未解析'}）`,
+      `代码 dominance=${domCode ? domCode[1] : '?'} · 现跑 ${mono ? mono[2] : '?'} · 文档 ${docDom ? docDom[1] : '?'}/${docGate[1] || '?'}`);
     const depths = names.map((k) => blocks[k].depth).filter(Number.isFinite);
     const docDepth = README.match(/score\/steps ≈ ([\d.]+)/);
     ok(!!docDepth && depths.length === 8 && depths.every((d) => Math.abs(d - +docDepth[1]) <= 0.15),
