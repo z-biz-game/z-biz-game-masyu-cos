@@ -160,7 +160,7 @@ const KNIVES = [
   },
   {
     id: 'K18', group: 'D18', file: 'tools/doctest.mjs',
-    from: 'const EXPECT_ROWS = 232;', to: 'const EXPECT_ROWS = 231;',
+    from: 'const EXPECT_ROWS = 233;', to: 'const EXPECT_ROWS = 232;',
     full: 1,
     breaks: '把本闸自己钉的项数悄悄改小 1（子集跑会 NOTE 掉自钉，所以这把必须整闸跑——那正是「删一条断言不改两处锁」这类谎的形状）',
     assert: /^.*FAIL .*D18b 本闸项数.*$/m,
