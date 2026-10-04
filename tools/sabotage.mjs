@@ -152,10 +152,10 @@ const KNIVES = [
     rc: '1',
   },
   {
-    id: 'K17', group: 'D17', file: '.github/workflows/pages.yml',
-    from: '          cp -r css js _site/', to: '          cp -r css js tools _site/',
-    breaks: '往 pages 的拷贝清单里加一个 tools（README 那句「tools/ 不进站点」与 DESIGN 那句「三项」同时失去代码背书）',
-    assert: /^.*FAIL .*D17b pages\.yml 拷进 artifact 的就是.*$/m,
+    id: 'K17', group: 'D17', file: 'tools/assemble-site.sh',
+    from: 'cp -r css js "$DEST/"', to: 'cp -r css js tools "$DEST/"',
+    breaks: '往唯一的拷贝清单里加一个 tools（README 那句「tools/ 不进站点」与 D17b 那句「清单只有一处」同时失去代码背书）',
+    assert: /^.*FAIL .*D17b 拷进 artifact 的清单只有一处.*$/m,
     rc: '1',
   },
   {
