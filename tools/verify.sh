@@ -202,7 +202,7 @@ if [ "$LOCAL" = 1 ]; then
     sleep 0.25
   done
   PRESERVED=$(curl -fsS -m 3 "$PRE" 2>/dev/null || true)
-  case "$PRESERVED" in *js/main.js*) ;; *) echo "  FAIL 前缀形状下拿不到本仓 index.html：$PRE（见 /tmp/masyu-prefix-server.log）" >&2; FAILED=1 ;; esac
+  case "$PRESERVED" in *js/main.js*) ;; *) echo "  FAIL 前缀形状下拿不到本仓 index.html：${PRE}（见 /tmp/masyu-prefix-server.log）" >&2; FAILED=1 ;; esac
   if [ -n "$PRESERVED" ]; then
     # open 而不是 eval：eval 默认会把 tab 导航回 BASE（根路径），那这一段就又在测一次根、
     # 前缀从来没被访问过——一个永远不会红的门禁。open 会先关掉本 origin 的旧 tab。
