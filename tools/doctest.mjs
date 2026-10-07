@@ -47,6 +47,16 @@ const EXPECT_ROWS = 233;
 // 「注释里写着没有 X」不等于「代码里没有 X」：判代码就得先把注释剥掉。
 const codeOnly = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
+// 锚点口径用整词而不是子串：`SIZES` 的行里 `SIZE` 也算"出现"，`reachable` 的行里 `reach` 也算——
+// 用 includes 判锚点，真漂移能读成绿，而这种闸最要的正是"名字不在了"。名字形状（isIdShape）走整词，
+// 短语 / CSS 选择器 / 带括号的形状仍走 includes，因为它们本来就不是标识符。
+const wordCache = new Map();
+const hasWord = (text, name) => {
+  if (!wordCache.has(name)) wordCache.set(name, new RegExp('(^|[^A-Za-z0-9_$])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^A-Za-z0-9_$])'));
+  return wordCache.get(name).test(text);
+};
+const isIdShape = (t) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(t);
+
 const CN = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
 const fromCN = (s) => (CN[s] !== undefined ? CN[s] : Number(s));
 
@@ -597,17 +607,35 @@ if (want('D10')) {
     seen.add(k);
     uniq.push(c);
   }
-  ok(uniq.length >= 12, `D10a 文档里「名字 + 行号」同现的引用解析到 ${uniq.length} 条（少于 12 条就是引用格式被改了，整组会空转）`,
-    `${uniq.length} 条：${uniq.slice(0, 3).map((c) => `${c.name}@${c.file}:${c.a}`).join(' ')}`);
+  // 锚点判定只有一座口径：下面这把 hit 同时供锚点用、也供自己那只刀用 —— 分成两座的话，
+  // "口径滑回子串"只会让刀找不到靶子，而 15 条锚点照样绿。
+  const hit = (l, n) => (isIdShape(n) ? hasWord(l, n) : l.includes(n));
+  // 整词那一道不许空转：从真引用里现量一把靶子 —— 某个名字截掉尾字符后仍是那几行的子串，
+  // 但按 hit 就是不命中。这一格不新增项数：靶子 AND 进 D10a，量不到就 D10a 自己红并说出"没被证明过"。
+  const wordKnife = (() => {
+    for (const c of uniq) {
+      const rp = resolveFile(c.file);
+      if (!rp) continue;
+      const bare = c.name.replace(/\(\)$/, '');
+      if (!isIdShape(bare)) continue;
+      const cut = bare.slice(0, -1);
+      if (cut.length < 3 || !isIdShape(cut)) continue;
+      const seg = read(rp).split('\n').slice(c.a - 1, c.b);
+      if (!seg.some((l) => hit(l, bare))) continue;
+      if (seg.join('\n').includes(cut) && !seg.some((l) => hit(l, cut))) return `${c.name}→${cut} 在 ${c.file}:${c.a}${c.b !== c.a ? `-${c.b}` : ''} 是子串但不是整词`;
+    }
+    return '';
+  })();
+  ok(uniq.length >= 12 && !!wordKnife, `D10a 文档里「名字 + 行号」同现的引用解析到 ${uniq.length} 条（少于 12 条就是引用格式被改了，整组会空转；这一格自己带一把截前缀的刀，口径滑回子串它就改口）`,
+    `${uniq.length} 条：${uniq.slice(0, 3).map((c) => `${c.name}@${c.file}:${c.a}`).join(' ')}${wordKnife ? ` · 刀：${wordKnife}` : ' —— 现量不出"子串在而整词不在"的靶子，整词那一道没被证明过'}`);
   for (const c of uniq) {
     const rp = resolveFile(c.file);
     const lines = rp ? read(rp).split('\n') : null;
     const bare = c.name.replace(/\(\)$/, '');
     const cands = [bare, bare.split('.').pop()].filter((x) => x.length > 1);
-    const seg = lines ? lines.slice(c.a - 1, c.b).join('\n') : '';
-    const at = lines ? lines.findIndex((l, i) => i + 1 >= c.a && i + 1 <= c.b && cands.some((n) => l.includes(n))) + 1 : 0;
+    const at = lines ? lines.findIndex((l, i) => i + 1 >= c.a && i + 1 <= c.b && cands.some((n) => hit(l, n))) + 1 : 0;
     ok(!!rp && at > 0, `D10 ${c.file}:${c.a}${c.b !== c.a ? `-${c.b}` : ''} 指的「${c.name}」现在还在那几行里`,
-      rp ? `代码第 ${at || '——'} 行 · 该范围内 ${cands.join('/')} 命中=${at > 0}` : '文件不在树里');
+      rp ? `代码第 ${at || '——'} 行 · 该范围内 ${cands.join('/')} 整词命中=${at > 0}` : '文件不在树里');
   }
   const scenLine = lineOf('tools/scenarios.js', /seed: 'gate-render-6'/);
   const scenCite = (DOCS.match(/`tools\/scenarios\.js:(\d+)`/) || [])[1];
@@ -634,16 +662,28 @@ if (want('D11')) {
     for (const d of ['tools/', 'js/engine/', 'js/', 'js/ui/', 'js/render/', 'css/', 'electron/', '']) if (existsSync(join(ROOT, d + base))) return d + base;
     return null;
   };
-  const bad = [];
-  for (const c of cites) {
-    const rp = resolve(c[1]);
-    if (!rp) { bad.push(`${c[1]}:${c[2]}（文件不存在）`); continue; }
-    const n = read(rp).split('\n').length;
-    if (+c[2] > n || (+c[3] && +c[3] > n)) bad.push(`${c[1]}:${c[2]}${c[3] ? '-' + c[3] : ''}（该文件只有 ${n} 行）`);
-  }
+  // 一条引用能犯的错有三样：文件不在树里、行号越界、被指的行段整段是空行。第三样是这一轮补的：
+  // 在中间插几行之后 `:NN` 指的是空行，可它还在界内，只问「行号存在吗」的那道闸一路绿。
+  const citeMiss = (raw, fromRaw, toRaw) => {
+    const rp = resolve(raw);
+    if (!rp) return `${raw}:${fromRaw}（文件不存在）`;
+    const src = read(rp).split('\n');
+    const to = +(toRaw || fromRaw);
+    if (+fromRaw > src.length || to > src.length) return `${raw}:${fromRaw}${toRaw ? '-' + toRaw : ''}（该文件只有 ${src.length} 行）`;
+    if (src.slice(+fromRaw - 1, to).join('').trim() === '') return `${raw}:${fromRaw}${toRaw ? '-' + toRaw : ''} 那几行整段是空行`;
+    return '';
+  };
+  const bad = cites.map((c) => citeMiss(c[1], c[2], c[3])).filter(Boolean);
+  // 空行这一道不许空转：靶子从本闸自己的文件里现量（写死行号会在有人填了那一行那天停止测试）。
+  const ownLines = read('tools/doctest.mjs').split('\n');
+  let blankAt = 0;
+  for (let i = 1; i < ownLines.length; i++) if (String(ownLines[i]).trim() === '') { blankAt = i + 1; break; }
+  const blankKnife = blankAt ? citeMiss('tools/doctest.mjs', blankAt, null) : '';
   ok(cites.length >= 50, `D11a 文档里的 path:NN 引用解析到 ${cites.length} 条（少于 50 条就是引用格式被改了）`, `${cites.length} 条`);
-  ok(bad.length === 0, `D11 每一条 path:NN 引用都落在真实文件的行数内（改了代码不重编行号就红在这里）`,
-    bad.length ? `越界：${bad.slice(0, 6).join('，')}${bad.length > 6 ? ` …共 ${bad.length} 条` : ''}` : `${cites.length} 条全部在范围内`);
+  ok(bad.length === 0 && !!blankKnife, `D11 每一条 path:NN 引用都落在真实文件的行数内、且被指的那几行整段不许是空行（改了代码不重编行号就红在这里；在界内不等于指到了代码，这一格自己带一把指向空行的刀）`,
+    bad.length ? `越界/不存在/空行：${bad.slice(0, 6).join('，')}${bad.length > 6 ? ` …共 ${bad.length} 条` : ''}`
+      : blankKnife ? `${cites.length} 条全部在范围内 · 刀：本闸第 ${blankAt} 行现量是空行，指过去判红「那几行整段是空行」`
+        : '本闸自己的文件里现量不出空行靶子 —— 空行那一道没被证明过');
 }
 
 // ---- D12 承诺表：README 那张表每行点得到真东西，标题那句「N 条」等于行数 ----
