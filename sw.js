@@ -1,68 +1,56 @@
-/* 数链 · Masyu 的 service worker
- *
- * 只有一种策略：**网络优先，失败退缓存**。为什么不做 cache-first——这个页面是
- * `<script type="module">` + 相对路径 import 的一堆同源子资源（js/engine/*.js 六张模块），
- * cache-first 会把它们连同 index.html 一起钉死在第一次抓取的那版上：出新 HTML 配旧引擎，
- * 玩家看到的是永远修不好的鬼状态，而且他自己刷不掉。版本号写在 cache 名里，
- * 每次发布改 VERSION ⇒ activate 时旧桶整桶删掉，不会留下越攒越多的孤儿缓存。
- *
- * file:// 下这个文件根本不会被注册（index.html 里那段守卫负责），所以这里不假设自己存在。
- */
-const VERSION = 'v0.1.0-1';
-const CACHE = `masyu-${VERSION}`;
-const APP_SHELL = [
-  './',
-  'index.html',
-  'css/game.css',
-  'manifest.webmanifest',
-  'icons/favicon-32.png',
-  'icons/icon-192.png',
-  'icons/icon-512.png',
-  'art/board-texture.png',
-  'art/fx-sprites.png',
-];
+'use strict';
+// 离线可用 + 永不被旧缓存钉住。
+//
+// 两条实测换来的口径：
+//   1) 一律 **网络优先**，命中网络才回填缓存。手工 VERSION + cache-first 的组合，
+//      发出去的 HTML 会配上上一版的 js/css，出一个"新界面配旧逻辑"的鬼状态，
+//      而且玩家自己无法恢复（只能等缓存过期）。
+//   2) 缓存名带版本号（activate 时清掉非本版的名字）。改版**不需要**同步 bump：
+//      同名文件重绘之后，网络优先这一条保证客户端下一次联网就拿到新字节。
+const VERSION = 'masyu-cos-v1';
+const CACHE = `${VERSION}-shell`;
+const PRECACHE = ['index.html', 'manifest.webmanifest'];
 
-self.addEventListener('install', (e) => {
-  // 预热只是"顺手"：拿不到（离线装、Pages 前缀不同形状）也不该让安装失败。
-  e.waitUntil(
-    caches
-      .open(CACHE)
-      .then((c) => Promise.allSettled(APP_SHELL.map((u) => c.add(new Request(u, { cache: 'reload' })))))
-      .catch(() => undefined)
+self.addEventListener('install', (ev) => {
+  // 首屏两件套先抓下来：断网时至少能打开界面，而不是浏览器的错误页。
+  ev.waitUntil(
+    caches.open(CACHE).then((c) => c.addAll(PRECACHE).catch(() => {})).then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-self.addEventListener('activate', (e) => {
-  e.waitUntil(
+self.addEventListener('activate', (ev) => {
+  ev.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => !k.startsWith(VERSION)).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener('fetch', (e) => {
-  const req = e.request;
+self.addEventListener('fetch', (ev) => {
+  const req = ev.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // 外链一律不接管（这页面也没有外链）
-  if (url.pathname.endsWith('/sw.js')) return; // 自己永远走网络，否则新版本永远下不来
+  if (url.origin !== self.location.origin) return;
 
-  e.respondWith(
+  ev.respondWith(
     fetch(req)
       .then((res) => {
-        if (res && res.ok && res.type === 'basic') {
+        if (res && res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => undefined);
+          caches.open(CACHE).then((c) => c.put(req, copy));
         }
         return res;
       })
-      .catch(() =>
-        caches
-          .match(req)
-          .then((hit) => hit || (req.mode === 'navigate' ? caches.match('index.html') : undefined))
-          .then((hit) => hit || Response.error())
-      )
+      .catch(async () => {
+        const hit = await caches.match(req);
+        if (hit) return hit;
+        // 导航请求（地址栏/刷新/桌面图标）离线时回落到缓存的那份壳，不白屏。
+        if (req.mode === 'navigate') {
+          const shell = await caches.match('index.html');
+          if (shell) return shell;
+        }
+        return Response.error();
+      })
   );
 });
