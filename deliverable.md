@@ -162,7 +162,7 @@ boot: masyu 0.1.0 at http://127.0.0.1:5276/
 === render ===
   6 checks, 0 failed  {'pearls': 7, 'edges': 60, 'cell': 76, 'dpr': 1, 'fingerprint': '6x6|2W12W14W15B17B22B29W|3c|e20760064f390c30'}
 === play ===
-  35 checks, 0 failed  {'loopLength': 28, 'verify': {'ok': True, 'length': 28}, 'seedBefore': 'gate-play-6', 'seedAfter': 'm1-e23a11ed6727'}
+  35 checks, 0 failed  {'loopLength': 28, 'verify': {'ok': True, 'length': 28}, 'seedBefore': 'gate-play-6', 'seedAfter': 'm1-cff4a029199c'}
 === marks ===
   16 checks, 0 failed  {'edges': 60, 'savedMoves': 2, 'savedMark': '2', 'fingerprint': '6x6|3W15W17W23B26B31W33B|3c|398c3c7090c93240'}
 === resume ===
