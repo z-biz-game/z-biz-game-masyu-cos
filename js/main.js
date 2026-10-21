@@ -662,6 +662,7 @@ window.masyu = {
   // 而不是听这里写的一句字符串。fx.state() 里是 clock/simSteps/accum/particles。
   fx,
   sound: Sound,
+  // —— 暂停：给闸台读的那张脸 ——
   get paused() {
     return paused;
   },
@@ -692,11 +693,6 @@ window.masyu = {
   store: Store,
   palette: Palette,
   space: Space,
-  // —— 暂停：给闸台读的那张脸 ——
-  get paused() {
-    return paused;
-  },
-  setPaused,
   /** 正在推进的那个数（毫秒）。暂停时它必须一毫秒不动 —— 这就是"真冻结"的判据。 */
   simClock: () => clock(),
 };
