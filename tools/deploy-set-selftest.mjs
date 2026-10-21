@@ -157,11 +157,16 @@ function knife(tag, want, mutate, note) {
 let bad = 0;
 
 // X1 清单落后于页面：assemble 少收一类文件，产物里没有它而页面会去要。
-// 有位图目录（这一仓 55/59 走 icons/，2 个走 assets/）就砍那个 for 循环，期望由靶子自己决定，
-// 两个目录名都在针里；内联位图的仓没有位图目录可砍，就砍无条件那行的 css。
+// 有位图目录就砍那支 for 循环，期望由靶子自己决定（页面第一条位图引用的文件名）。
+// 针**从仓里现取**：那支循环的目录名不能写死在台架里——写死了就等于让台架记住"这一仓的清单
+// 长什么样"，清单一改（多收一个 art/、少收一个 assets/）台架自己先炸，炸的还是刀口而不是闸。
+// 内联位图的仓没有位图目录可砍，就砍无条件那行的 css。
 if (pngRefs.length) {
   if (!knife('X1 assemble 不收位图目录', ['R10', path.basename(pngRefs[0].target)], (dir) => {
-    edit(dir, 'tools/assemble-site.sh', 'for d in icons assets; do', 'for d in probe_missing_dir; do');
+    const t = read(dir, 'tools/assemble-site.sh');
+    const m = t.match(/^([ \t]*)for d in ([^;\n]+); do$/m);
+    if (!m) throw new Error('tools/assemble-site.sh 里找不到 "for d in ...; do" 那支位图循环（刀口打空）');
+    write(dir, 'tools/assemble-site.sh', t.replace(m[0], `${m[1]}for d in probe_missing_dir; do`));
   })) bad += 1;
 } else {
   if (!cssRefInArtifact) {
