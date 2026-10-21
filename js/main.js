@@ -66,31 +66,6 @@ function startClock() {
   if (!startedAt && !paused) startedAt = Date.now();
 }
 
-// ── 暂停 ────────────────────────────────────────────────────────────────
-// 暂停是**真冻结时钟**，不是挂个标签：暂停那一瞬把还在跑的那一段折进 baseElapsed，
-// 再把 startedAt 清零 —— clock() 于是恒等于 baseElapsed，一毫秒都不再涨。
-// 恢复时重新盖上 startedAt，时钟从冻结处续走；因为 baseElapsed 已经是累计值，
-// 恢复后第一帧的 dt 就是一个正常帧间隔，不会把暂停那几秒一次性吃掉（不跳步）。
-let paused = false;
-function setPaused(next) {
-  next = !!next;
-  if (paused === next) return paused;
-  if (next) {
-    baseElapsed = clock();   // 先结算到此刻，再停表
-    startedAt = 0;
-  } else {
-    startedAt = Date.now();
-  }
-  paused = next;
-  paintPause();
-  return paused;
-}
-function paintPause() {
-  const btn = $('btn-pause');
-  if (!btn) return;
-  btn.textContent = paused ? '继续' : '暂停';
-  btn.setAttribute('aria-pressed', paused ? 'true' : 'false');
-}
 function fmt(ms) {
   const s = Math.floor(ms / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -347,8 +322,6 @@ async function newGame({ seed = mintSeed(), sizeKey = game ? game.sizeKey : DEFA
   anchor = -1;
   baseElapsed = carry.elapsedMs || 0;
   startedAt = Date.now();
-  // 换一局＝新的一局，新局一定在走：带着上一局的 paused=true 进来会让时钟和按钮各说各话
-  if (paused) { paused = false; paintPause(); }
   relayout();
   render();
   persist();
@@ -557,13 +530,6 @@ window.addEventListener('keydown', async (ev) => {
     const order = ['loop', 'cut', 'erase'];
     setMode(order[(order.indexOf(mode) + 1) % order.length]);
     srCell.textContent = `画笔：${mode === 'loop' ? '画环' : mode === 'cut' ? '排除叉' : '擦掉'}`;
-  } else if (k === 'n' || k === 'N') {
-    await newGame({});
-    return;
-  } else if (k === 'p' || k === 'P') {
-    // 空格在本仓已经被"落一笔"占了（k === ' ' 那支），所以暂停只挂 P，不抢空格
-    setPaused(!paused);
-    return;
   } else return;
   render();
 });
@@ -582,13 +548,14 @@ function setMutedUI(muted) {
 
 function toggleFullscreen() {
   const d = document;
-  if (d.fullscreenElement || d.webkitFullscreenElement) {
-    const exit = d.exitFullscreen || d.webkitExitFullscreen;
+  if (d.fullscreenElement || d.webkitFullscreenElement || d.msFullscreenElement) {
+    const exit = d.exitFullscreen || d.webkitExitFullscreen || d.msExitFullscreen;
     if (exit) Promise.resolve(exit.call(d)).catch(() => {});
     return;
   }
   const el = $('app') || d.documentElement;
-  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  // 三套前缀都探：老 Edge 只认 ms 前缀（它把 msRequestFullscreen 挂在元素上）。
+  const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
   if (!req) {
     stateLine.className = 'state-line hint';
     stateLine.textContent = '这台设备没给全屏接口（requestFullscreen 不存在）：这一条我做不到，盘面照常能玩。';
@@ -601,7 +568,7 @@ function toggleFullscreen() {
 }
 
 function syncFullscreenLabel() {
-  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
   const b = $('btn-fullscreen');
   b.setAttribute('aria-pressed', String(on));
   b.textContent = on ? '退出全屏' : '全屏';
@@ -634,7 +601,8 @@ $('btn-clear').addEventListener('click', () => {
   render();
   persist();
 });
-$('btn-pause').addEventListener('click', () => setPaused(!paused));
+// 暂停按钮的接线只有上面那一条（btn-clear 那组之后就是它）：
+// 并线时这一颗按钮上挂了两个处理器 ⇒ 一次点击进出各一次，净效果是"按了没反应"。
 $('btn-mode-loop').addEventListener('click', () => setMode('loop'));
 $('btn-mode-cut').addEventListener('click', () => setMode('cut'));
 $('btn-mode-erase').addEventListener('click', () => setMode('erase'));
@@ -756,111 +724,3 @@ window.masyu = {
   if (!started) await newGame({});
   window.masyu.state = paused ? 'paused' : 'playing';
 })();
-
-// ---- 全屏开关 ----
-//
-// 绑到 index.html 的 HUD 里真实存在的 #btn-fullscreen。
-// 只在 js 里留一串 requestFullscreen 能骗过字符串扫描，但按钮不在 DOM 里就是死代码：
-// 玩家按不到，功能等于没做。所以 id 必须与 HTML 里的按钮对得上，缺失时要在控制台喊出来。
-//
-// 三套 API 一律**特性探测**，不做 UA 判断：iPhone 版 Safari 压根没有元素全屏（只有 <video> 能全屏），
-// 老 Edge 只认 ms 前缀，Firefox 认 moz 前缀。UA 字符串是猜的，方法在不在是量的，猜错就静默失效。
-function fsRoot() {
-  return document.documentElement;
-}
-
-function fsElement() {
-  return document.fullscreenElement || document.webkitFullscreenElement || null;
-}
-
-function fsRequest(root) {
-  // 老 Edge 的 msRequestFullscreen 挂在元素上，和标准名同一个位置，所以并排取即可。
-  return root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen || null;
-}
-
-// iOS Safari 会把非 video 元素的请求直接 reject 成 NotAllowedError。
-// 这个 promise 没人接就升级成 unhandledrejection，冒到 window.onerror——离屏预载时足以把整页判死。
-// 因此凡是可能返回 promise 的调用，返回值一律就地吞掉，绝不让拒绝逃出这一层。
-function fsQuiet(p) {
-  if (p && typeof p.catch === 'function') p.catch(() => {});
-  return p;
-}
-
-// 返回 true=请求进入，false=请求退出，null=不支持（调用方据此禁用按钮）。
-function toggleFullscreen(root) {
-  const req = fsRequest(root);
-  if (!req) return null;
-  if (fsElement()) {
-    // 退出侧同样要兜底：老 Edge 是 msExitFullscreen；万一三者皆无就当无事发生，不抛。
-    const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-    if (exit) fsQuiet(exit.call(document));
-    return false;
-  }
-  // 部分实现（如被 Permissions-Policy 挡住的 iframe）会同步抛，所以 catch 和 .catch 两头都要接。
-  try {
-    fsQuiet(req.call(root));
-  } catch (err) {
-    // 拒绝即降级：静默保持当前形态，不冒泡、不打断这一局的其余逻辑。
-  }
-  return true;
-}
-
-function bindFullscreen(btn) {
-  const root = fsRoot();
-
-  // 状态回写：Esc 和 iOS 下滑手势退出时不会经过按钮，
-  // 只有 fullscreenchange 事件能把按钮的文案/字形拉回正确状态，否则它会一直假装自己在全屏里。
-  const sync = () => {
-    const on = !!fsElement();
-    btn.setAttribute('aria-pressed', String(on));
-    btn.textContent = on ? "退出全屏" : "全屏";
-    btn.title = on ? "退出全屏 (F)" : "全屏 (F)";
-    document.body.classList.toggle('is-fullscreen', on);
-    return on;
-  };
-
-  if (!fsRequest(root)) {
-    // 不支持就要说明为什么：只把按钮变灰，玩家会以为这活根本没做完。
-    btn.disabled = true;
-    btn.setAttribute('aria-disabled', 'true');
-    btn.title = '这个浏览器不提供元素全屏（iOS Safari 请用「添加到主屏幕」）';
-    return;
-  }
-
-  btn.addEventListener('click', () => {
-    toggleFullscreen(root);
-    sync();
-  });
-
-  document.addEventListener('fullscreenchange', sync);
-  document.addEventListener('webkitfullscreenchange', sync);
-
-  window.addEventListener('keydown', (ev) => {
-    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-    // 正在输入框里打字时不劫持按键，否则会打不出 f。
-    if (ev.target && /^(input|textarea|select)$/i.test(ev.target.tagName)) return;
-    if (ev.key === "f" || ev.key === "F") {
-      ev.preventDefault();
-      toggleFullscreen(root);
-      sync();
-    }
-  });
-
-  sync();
-}
-
-function bootFullscreen() {
-  const btn = document.getElementById("btn-fullscreen");
-  if (!btn) {
-    // 按钮被谁删掉了？在控制台喊出来，别让这个坑静默地烂在下一棒手里。
-    console.warn('[fullscreen] index.html 里找不到 #' + "btn-fullscreen" + '，全屏开关没有入口');
-    return;
-  }
-  bindFullscreen(btn);
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootFullscreen);
-} else {
-  bootFullscreen();
-}

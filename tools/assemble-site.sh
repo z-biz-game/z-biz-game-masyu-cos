@@ -17,13 +17,19 @@ cd "$HERE" || exit 2
 # 进站点的：玩家浏览器会去要的东西，一个都不落。
 cp index.html manifest.webmanifest sw.js "$DEST/"
 cp -r css js "$DEST/"
-# 位图目录名不统一（icons/ 与 assets/ 都在用）：按存在与否收，缺的那个不是错误。
-for d in icons assets; do
+# 位图目录（icons/ 与 art/ 都在用）：按存在与否收，缺的那个不是错误。
+# art/ 是运行时真在要的图：css/game.css 的盘面底纹 url('../art/board-texture.png') 与
+# js/main.js 的 fx.loadSprite('art/fx-sprites.png') 都从产物里取。少了它，本地一切全绿
+# （本地读的是仓库根），线上却是 404 的底纹 + 404 的粒子条——而 tools/deploy-set.mjs
+# 正是按这份清单拷出来的产物查的，缺了就当场红。
+for d in icons art; do
   [ -d "$d" ] && cp -r "$d" "$DEST/"
 done
 
 # 不进站点的（有意为之，别"顺手加上"）：
 #   server.cjs / electron/     本地与桌面形态的宿主，浏览器用不到，传上去只是把源码摊开
+#   assets/                    出图脚本（assets/gen/gen_art.py）与它的清单，是**造**图标与纹理
+#                              的源码，不是运行时资源；页面一次也没要过它
 #   tools/                     闸与台架
 #   README.md DESIGN.md        给组织的文档
 #   package.json               站点不读它；带上只会让 Pages 多一个可访问的依赖清单

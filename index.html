@@ -5,18 +5,32 @@
 <!-- 不写 <base>：页面既要在 http://host/ 下跑，也要在 GitHub Pages 的 /z-biz-game-masyu-cos/
      前缀下跑。所有资源都用相对路径，动态 import 走 document.baseURI，硬编的 "/" 会在
      前缀形状下把 css 和引擎全部 404 掉。 -->
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><meta name="twitter:card" content="summary">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#070A14" />
 <title>数链 · Masyu 回路推理</title>
-<meta name="description" content="Masyu 数链：把一条不自交的闭环连过所有珠子——黑珠处必须拐弯且前后直穿，白珠处必须直穿且前后至少拐一次。每局唯一解，判胜只由引擎的 verify 说了算。" /><meta property="og:title" content="数链 · Masyu 回路推理"><meta property="og:description" content="Masyu 数链：把一条不自交的闭环连过所有珠子——黑珠处必须拐弯且前后直穿，白珠处必须直穿且前后至少拐一次。每局唯一解，判胜只由引擎的 verify 说了算。"><meta property="og:image" content="https://z-biz-game.github.io/z-biz-game-masyu-cos/icons/icon-512.png"><meta name="twitter:image" content="https://z-biz-game.github.io/z-biz-game-masyu-cos/icons/icon-512.png">
-<!-- Inline icon: without it the browser probes the domain root for /favicon.ico and logs a 404. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A14'/%3E%3Cpath d='M9 9h14v14' fill='none' stroke='%23FFC85C' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='9' cy='9' r='3.4' fill='%2305070D' stroke='%23F2F5FB' stroke-width='1.4'/%3E%3Ccircle cx='23' cy='23' r='3.4' fill='%23F2F5FB'/%3E%3C/svg%3E" />
+<meta name="description" content="Masyu 数链：把一条不自交的闭环连过所有珠子——黑珠处必须拐弯且前后直穿，白珠处必须直穿且前后至少拐一次。每局唯一解，判胜只由引擎的 verify 说了算。" />
+<!-- 分享卡片用 art/og.png（1200×630 横版），不是方形图标：抓取器不会替我们补 Pages 的
+     /<slug>/ 前缀，所以这里写绝对 URL（tools/deploy-set.mjs 的 R7 就是拿 README 声明的那个
+     前缀量的，量的是"是不是本站那一张"而不是"像不像绝对 URL"）。 -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="数链 Masyu" />
+<meta property="og:title" content="数链 · Masyu 回路推理" />
+<meta property="og:description" content="把一条不自交的闭环连过所有珠子：黑珠那格必须拐弯，白珠那格必须直穿。出货的每一盘都实测过唯一解与零猜测可推到底。" />
+<meta property="og:image" content="https://z-biz-game.github.io/z-biz-game-masyu-cos/art/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://z-biz-game.github.io/z-biz-game-masyu-cos/art/og.png" />
+<!-- 图标全部指向盘上真 PNG（assets/gen/gen_art.py 产的，file + PNG IHDR 逐张量过）。
+     并线时这里一度同时挂着一枚 data: URI 的手写 SVG 与下面几枚 PNG：浏览器只会挑一枚，
+     而 SVG 既装不到桌面也进不了任何启动器——16px 的矢量小图冒充不了 180px 的位图图标。
+     顺带一提，SVG 那枚当初是为了"别让浏览器去探 /favicon.ico"，可下面这些 link 一样能挡。 -->
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
 <link rel="stylesheet" href="css/game.css" />
-
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="manifest" href="manifest.webmanifest">
 </head>
 <body>
 <div id="app">
@@ -27,6 +41,10 @@
     </div>
     <div class="top-actions">
       <button id="btn-pause" class="ghost" type="button" aria-pressed="false" title="暂停 / 继续 (P)">暂停</button>
+      <!-- 声音开关：并线时这颗按钮被裁掉了，而 js/main.js 里 $('btn-sound') 还在
+           （启动块要写它的状态、点击接线也指着它）⇒ 页面一加载就 TypeError，整局不可玩。
+           它与本地侧那套音效子系统（M 键、静音偏好落盘、静音时真停 AudioContext）是一套。 -->
+      <button id="btn-sound" class="ghost" type="button" aria-pressed="false" title="开声音：落笔、画叉、接不通与成环各一个音；关掉是真的停掉 AudioContext（M）">音效 关</button>
       <button id="btn-motion" class="ghost" type="button" aria-pressed="false">动效 全</button>
       <button type="button" id="btn-fullscreen" class="ghost" aria-pressed="false" title="全屏 (F)">全屏</button>
     </div>
@@ -138,24 +156,9 @@
   </footer>
 </div>
 
-<script>
-// 注册 service worker。三条边界都得守住：
-//   ① file://（以及 Electron 直接 loadFile）下没有 SW 这回事，整段跳过——注册必抛，
-//      而一条未捕获的 Promise rejection 会让「页面干净加载」这件事变成假的。
-//   ② 路径相对 document.baseURI 解析：Pages 的 /z-biz-game-masyu-cos/ 前缀下硬编 "/sw.js" 会 404。
-//   ③ 装不上照样能玩（离线缓存是增益，不是前置条件），所以 catch 到底、不弹错。
-if (location.protocol === 'http:' || location.protocol === 'https:') {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function () {
-      try {
-        navigator.serviceWorker.register(new URL('sw.js', document.baseURI).href).catch(function () {});
-      } catch (e) {
-        /* 连注册都抛了：忽略，游戏与安装无关 */
-      }
-    });
-  }
-}
-</script>
+<!-- service worker 的注册只有一处：js/sw-register.js（见那个文件里的三条边界）。
+     并线时这里还留着一份等价的内联脚本——两份注册都会在 load 事件上跑一次，
+     "装上了没有"从此有两个答案，排查时看到的是哪一个也说不准。 -->
 <script type="module" src="js/main.js"></script>
   <script src="js/sw-register.js"></script>
 </body>
