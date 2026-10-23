@@ -758,10 +758,27 @@ if (want('D13')) {
     'D13j DESIGN §9.6 那句「CI 只跑…」同样回填了这两道闸', `DESIGN 那半句：${docCiD ? docCiD[1].trim().slice(0, 48) : '未解析'}`);
   ok(PKG.scripts?.verify === 'bash tools/verify.sh', 'D13k npm run verify 就是那条本地闸命令（CI 不整跑它，因为它要真 Chrome）',
     `pkg.verify=${PKG.scripts?.verify}`);
-  const docSize = ONE.match(/文档数字闸（(\d+) 组 \/ (\d+) 项）/);
-  ok(!!docSize && +docSize[1] === EXPECT_GROUPS && +docSize[2] === EXPECT_ROWS,
-    `D13l README 抄的本闸规模「${docSize ? `${docSize[1]} 组 / ${docSize[2]} 项` : '未解析'}」== 闸里钉的 ${EXPECT_GROUPS} 组 / ${EXPECT_ROWS} 项（闸自己的规模也是一个印出去的数）`,
-    `README ${docSize ? docSize.slice(1).join('/') : '未解析'} vs 钉的 ${EXPECT_GROUPS}/${EXPECT_ROWS} · verify.sh ${(VERIFY.match(/DOCTEST_EXPECT_ROWS=(\d+)/) || [])[1] || '?'}`);
+  // 本闸的规模是「印出去的数」，而它被抄在好几种文法里：README 那句「文档数字闸（N 组 / M 项）」、
+  // deliverable.md 的日志块把闸打印的 `STAMP groups=N rows=M subset=none` 与「合计 M 项，0 项失败」整行抄回去、
+  // 开头那张表还写「**M 项 / N 组**」。以前这一格只认 README/DESIGN 那一种文法，deliverable.md 里的抄数
+  // 没人对账，于是它一路停在「235 项 / 18 组」而闸已经发 236 项。现在按面逐份扫，每一种文法解析到的每一处
+  // 都要等于钉的数；文法被改写导致解析变少，也是这里红（下界 6 处）。
+  const SIZE = [
+    [/文档数字闸（(\d+) 组 \/ (\d+) 项）/g, (m) => [+m[1], +m[2]]],
+    [/STAMP groups=(\d+) rows=(\d+) subset=none/g, (m) => [+m[1], +m[2]]],
+    [/(\d+) 项 \/ (\d+) 组/g, (m) => [+m[2], +m[1]]],
+    [/合计 (\d+) 项，0 项失败/g, (m) => [EXPECT_GROUPS, +m[1]]],
+  ];
+  const sizeCopies = [];
+  for (const f of FACES) {
+    const t = read(f).replace(/\n\s*/g, ' '); // 抄数会跨行折行：压平再对
+    for (const [re, pick] of SIZE) for (const m of t.matchAll(re)) sizeCopies.push({ where: `${f} ${m[0]}`, g: pick(m)[0], r: pick(m)[1] });
+  }
+  const badSize = sizeCopies.filter((c) => c.g !== EXPECT_GROUPS || c.r !== EXPECT_ROWS);
+  ok(sizeCopies.length >= 6 && badSize.length === 0,
+    `D13l 面里抄的本闸规模（${sizeCopies.length} 处，四种文法都扫）每一处都 == 闸里钉的 ${EXPECT_GROUPS} 组 / ${EXPECT_ROWS} 项（闸自己的规模也是印出去的数：增删一条断言不回填这些格子，或把抄本文法改到解析不出来，就红在这里）`,
+    badSize.length ? `不符：${badSize.map((c) => `${c.where}=${c.g}/${c.r}`).join('，')}`
+      : sizeCopies.map((c) => `${c.where.slice(0, 56)}=${c.g}/${c.r}`).join(' · '));
 }
 
 // ---- D14 墙钟那一类：只比「文档自己声明会漂」这层关系，绝不重测、也不把毫秒写回文档 ----
@@ -806,12 +823,23 @@ if (want('D16')) {
   const sabSrc = existsSync(join(ROOT, 'tools/sabotage.mjs')) ? read('tools/sabotage.mjs') : '';
   const heads = [...sabSrc.matchAll(/^    id: '(K\d+)', group: '(D\d+[a-z]?)'/gm)]; // 行首锚定：刀自己的 from/to 字面量里也写着 id/group，不锚定就会把刀数成 20 把
   const knifeIds = heads.map((m) => m[1]), groups = heads.map((m) => m[2]);
-  ok(knifeIds.length >= 18, `D16a sabotage.mjs 里十八把刀一把不少（当前 ${knifeIds.length} 把：${knifeIds.join(' ')}）`, `${knifeIds.length} 把`);
+  ok(knifeIds.length >= 18, `D16a sabotage.mjs 里的刀一把不少（钉的下界 18，当前 ${knifeIds.length} 把：${knifeIds.join(' ')}）`, `${knifeIds.length} 把`);
   ok(new Set(groups).size === groups.length && groups.length === knifeIds.length,
     `D16b 每把刀打的是不同断言组（刀 ${knifeIds.length} 把 · 组 ${groups.join(' ')}）`, groups.join('/'));
   const knifeDoc = (README.match(/破坏试验台账（(\d+) 把刀）/) || [])[1];
-  ok(!!knifeDoc && +knifeDoc === knifeIds.length, `D16c README 那句「台账（${knifeDoc || '?'} 把刀）」== 脚本里的刀数`,
-    `文档 ${knifeDoc || '未解析'} vs 脚本 ${knifeIds.length}`);
+  // 刀数也是抄出去的数，而且有两种文法：README/DESIGN/deliverable 的散文「N 把刀」（中文数字也认）与
+  // 台账打印的 `KNIVES=N`。以前只读 README 那一句，面里其余 6 处没人对账——上一轮它就停在
+  // 「18 把刀」而脚本已经有 19 把。现在逐面对账，且要求解析到的处数不许变少（改文法让某一处解析不出来，同样红）。
+  const knifeCopies = [];
+  for (const f of FACES) {
+    const t = read(f).replace(/\n\s*/g, ' ');
+    for (const m of t.matchAll(/([0-9]+|[一二两三四五六七八九十]+) ?把刀/g)) knifeCopies.push({ where: `${f} ${m[0]}`, n: fromCN(m[1]) });
+    for (const m of t.matchAll(/KNIVES=(\d+)/g)) knifeCopies.push({ where: `${f} ${m[0]}`, n: +m[1] });
+  }
+  const badKnife = knifeCopies.filter((c) => c.n !== knifeIds.length);
+  ok(knifeCopies.length >= 7 && badKnife.length === 0,
+    `D16c 面里抄的刀数（${knifeCopies.length} 处：散文「N 把刀」+ 打印的 KNIVES=N）每一处都 == 脚本里的 ${knifeIds.length} 把；README 那句「台账（${knifeDoc || '?'} 把刀）」也在其中`,
+    badKnife.length ? `不符：${badKnife.map((c) => `${c.where}=${c.n}`).join('，')}` : `脚本 ${knifeIds.length} 把 · ${knifeCopies.map((c) => `${c.where.slice(0, 30)}=${c.n}`).join(' · ')}`);
   const rcCells = knifeIds.map((id) => { const m = sabSrc.match(new RegExp(`id: '${id}'[\\s\\S]*?rc: '(\\d+|\\?)'`)); return m ? m[1] : null; });
   ok(rcCells.every((x) => x && /^\d+$/.test(x)), `D16d 台账每一格 rc 都是从闸读回来的数字（'?' 表示这一版还没整跑过）`, rcCells.join(' / '));
   const asserts = [...sabSrc.matchAll(/assert: \//g)];

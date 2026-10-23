@@ -14,8 +14,8 @@
 | 依赖 | 运行时 **0** 个、`devDependencies` 1 个（electron，只有 `npm run electron` 那条路需要它） |
 | 二进制资产 | 14 张 PNG（`icons/` 11 + `art/` 3），无音频文件（音效由 WebAudio 合成）、无字体 |
 | node 断言 | **67 条**（`tools/rule-test.mjs`，每条规则要 fire / contra / 静得住），0 失败；另有 `tools/pencil-test.mjs` 逐结论对账 **7403 条结论**推错 0、`tools/counter-test.mjs` 五节、`tools/generator-probe.mjs` 五档 ×8 盘 |
-| 文档腿 | **235 项 / 18 组**（`tools/doctest.mjs`），0 失败；破坏试验台账 **18 把刀**（`tools/sabotage.mjs`）全绿 |
-| 部署集 | **43 条引用 / 77 条断言 / 10 张位图尺寸核对**（`tools/deploy-set.mjs`），0 失败；阴性自证 `tools/deploy-set-selftest.mjs` rc=0（13 把刀按预期发力，2 把按本仓形状合法 SKIP） |
+| 文档腿 | **236 项 / 19 组**（`tools/doctest.mjs`），0 失败；破坏试验台账 **19 把刀**（`tools/sabotage.mjs`）全绿 |
+| 部署集 | **43 条引用 / 77 条断言 / 10 张位图尺寸核对**（`tools/deploy-set.mjs`），0 失败；阴性自证 `tools/deploy-set-selftest.mjs` rc=0（13 把自证刀按预期发力，2 把按本仓形状合法 SKIP） |
 | 浏览器断言 | **99 项**，6 段（boot 11 / render 6 / play 35 / marks 16 / resume 13 / hint 18）+ 一次 Pages 前缀形状冒烟，0 红 |
 | 验收命令 | `npm run check` · `npm test` · `node tools/doctest.mjs` · `node tools/sabotage.mjs` · `node tools/deploy-set.mjs` · `node tools/deploy-set-selftest.mjs` · `bash tools/verify.sh` |
 
@@ -70,8 +70,8 @@ $ git ls-files | grep -cE '\.(png|jpg|jpeg|mp3|wav|woff2?|ttf|svg)$'
 闸的**断言一条没改、强度一条没降**：
 
 - 部署集闸仍然逐条查「页面要去的东西在不在产物里且非 0 字节」（R10）、仍然要求引用条数与断言条数**两个数一起**等于钉在文件里的值（少一条断言就不能是绿的）、仍然逐张核 PNG 容器与声明尺寸（P1/P2）、仍然要求 `og:image` 是**本站**前缀下的绝对 URL 且那张图在产物里（R7）。本仓 R7 的刀（`X11`/`X12`）实测都按预期发力。
-- 文档腿 `tools/doctest.mjs` 的**项数一项没动**（235 项 / 18 组，钉在 `tools/doctest.mjs` 与 `tools/verify.sh` 两处锁）。本次只**重钉位置**（把指错位置的引用指回真的地方），没有增删任何一条断言；`D10a` 要求的「名字 + 行号」同现引用条数与那把「截前缀」刀都还在。
-- 破坏台账 `tools/sabotage.mjs` **18 把刀一把没少**，每把的靶面与点名正则都没动；连 K17（往拷贝清单里加 `tools`）在新清单下照样逼红 `D17b`。
+- 文档腿 `tools/doctest.mjs` 的**项数一项没动**（那一轮改前改后都是 18 组、235 项，两处锁在 `tools/doctest.mjs` 与 `tools/verify.sh`；这两格是**那一轮**的读数，盘上没有那一版，任何腿都读不到，所以刻意不写成「N 项 / N 组」那种会被当现役指针的对账文法——现役规模只看上面概览表与下面的日志块）。本次只**重钉位置**（把指错位置的引用指回真的地方），没有增删任何一条断言；`D10a` 要求的「名字 + 行号」同现引用条数与那把「截前缀」刀都还在。
+- 破坏台账 `tools/sabotage.mjs` 那一轮数到 18 把，一把没少；每把的靶面与点名正则都没动；连 K17（往拷贝清单里加 `tools`）在新清单下照样逼红 `D17b`。
 
 ### 真实文件清单（本次改动的文件）
 
@@ -120,12 +120,12 @@ OK counter-test
 OK generator-probe
 
 $ node tools/doctest.mjs
-合计 235 项，0 项失败
-STAMP groups=18 rows=235 subset=none
+合计 236 项，0 项失败
+STAMP groups=19 rows=236 subset=none
 
 $ node tools/sabotage.mjs
-KNIVES=18
-台账全绿：18 把刀各自逼红了点名的断言，复原逐字节一致，两遍输出相同，干净树对照 doctest 绿。
+KNIVES=19
+台账全绿：19 把刀各自逼红了点名的断言，复原逐字节一致，两遍输出相同，干净树对照 doctest 绿。
 
 $ node tools/deploy-set.mjs
 部署集：43 条引用（含 10 张位图尺寸核对），失败 0 项
@@ -150,11 +150,11 @@ DS_SELFTEST rc=0（0=每一刀都按预期发力、阴性对照按预期不发�
 
 $ bash tools/verify.sh
 === 逻辑闸 tools/doctest.mjs（文档数字 == 代码 / balance / 四套纯 Node 闸的现跑）===
-合计 235 项，0 项失败
-STAMP groups=18 rows=235 subset=none
+合计 236 项，0 项失败
+STAMP groups=19 rows=236 subset=none
 === 逻辑闸 tools/sabotage.mjs（破坏试验台账：每一类谎都要把对应断言逼红）===
-KNIVES=18
-台账全绿：18 把刀各自逼红了点名的断言，复原逐字节一致，两遍输出相同，干净树对照 doctest 绿。
+KNIVES=19
+台账全绿：19 把刀各自逼红了点名的断言，复原逐字节一致，两遍输出相同，干净树对照 doctest 绿。
 opened http://127.0.0.1:5276/
 boot: masyu 0.1.0 at http://127.0.0.1:5276/
 === boot ===

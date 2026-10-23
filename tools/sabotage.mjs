@@ -22,13 +22,15 @@ import { dirname, join } from 'node:path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const p = (rel) => join(ROOT, rel);
 
-// 十八把刀，doctest 的十八个组一组一把（D1 菜单档位、D2 权重表、D3 档位全景、D4 支配门槛、D5 四套闸的
+// 十九把刀，doctest 的十九个组一组一把（D1 菜单档位、D2 权重表、D3 档位全景、D4 支配门槛、D5 四套闸的
 // 条数、D6 端口默认号、D7 场景序列、D8 侧栏规则条数、D9 存档键名、D10 符号锚点、D11 引用越界、
 // D12 承诺表点名的路径、D13 接线、D14 毫秒红线、D15 unpinned needle、D16 台账自己、D17 站点拷贝清单、
-// D18 本闸项数）。除 D2/D3/D4/D5/D18 之外都是纯文本/常量的最小扰动，子集跑每把只要零点几秒；
+// D18 本闸项数、D19 引用腿读哪些纸面）。除 D2/D3/D4/D5/D18 之外都是纯文本/常量的最小扰动，子集跑每把只要零点几秒；
 // 那四把要现跑 balance 或 rule-test，D18 只能整闸跑（自钉在子集跑里被 NOTE 跳过，见下面 full）。
 // 两把刀用别的落法：D12 的靶面是「文档点名的路径还在不在树里」，只能把文件挪开（rename）；
 // D16 的靶面是台账自己，所以它改的是本文件里另一把刀的组名。
+// D19 不用挪文件那种落法：台账在真实仓里落刀（那里问得到 git），索引仍是提交那一版，被挪走的那份还留在
+// 名单里 —— 闸读它时抛异常，rc 非 0 但没有点名的 FAIL，等于第二宗罪。所以这一把改名单那一行本身。
 const KNIVES = [
   {
     id: 'K1', group: 'D1', file: 'js/engine/generate.js',
@@ -167,9 +169,10 @@ const KNIVES = [
     rc: '1',
   },
   {
-    id: 'K19', group: 'D19', file: 'deliverable.md', rename: 'deliverable-offline.md',
-    breaks: '把 deliverable.md 整份挪出树（D19a 的靶面就是「输入集里每一份面都真的贡献引用」，只能挪文件，不改内容；'
-      + '这一份里的现役引用由 D11 判，本轮 widened 的第一跑就是 D11 抓到它印的旧指针落在空行上）',
+    id: 'K19', group: 'D19', file: 'tools/doctest.mjs',
+    from: 'const FACES = faceSrc.faces;', to: "const FACES = ['README.md', 'DESIGN.md'];",
+    breaks: '把引用腿的输入集退回手写这两份（正是这一轮修掉的那个洞：deliverable.md 悄悄掉出名单，'
+      + '它印的行号一条都没被读，而 D11「每一条 path:NN 引用都落在真实文件的行数内」照样打印、照样绿）',
     assert: /^.*FAIL .*D19a 引用腿的输入集.*$/m,
     rc: '1',
   },
