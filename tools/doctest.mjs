@@ -16,7 +16,7 @@
 //   5. 引用 `file:NN` 的每一条都跑一次范围与锚点检查 —— 代码改一个字，行号就漂；
 //   6. 本闸自己的组数与项数都自钉（D18），verify.sh 的 DOCTEST_EXPECT_* 再从外面钉一次 ——
 //      删一条断言不改这两处就是红。`DOC_GROUPS=D1,D6 node tools/doctest.mjs` 是子集跑，必须打 NOTE。
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -41,8 +41,8 @@ const ONLY = (process.env.DOC_GROUPS || '').trim().split(/[\s,]+/).filter(Boolea
 const want = (g) => ONLY.length === 0 || ONLY.includes(g);
 // 本闸自己的规模：组数与整闸跑的项数（= STAMP 那一行的 rows）。三处同钉：这里、README 抄的那句、
 // verify.sh 的 DOCTEST_EXPECT_*。删一条断言 → 这里红；偷偷把这里改小 → verify.sh 那两处红。
-const EXPECT_GROUPS = 18;
-const EXPECT_ROWS = 235;
+const EXPECT_GROUPS = 19;
+const EXPECT_ROWS = 236;
 
 // 「注释里写着没有 X」不等于「代码里没有 X」：判代码就得先把注释剥掉。
 const codeOnly = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
@@ -63,6 +63,19 @@ const fromCN = (s) => (CN[s] !== undefined ? CN[s] : Number(s));
 const README = read('README.md');
 const DESIGN = read('DESIGN.md');
 const DOCS = README + '\n' + DESIGN;
+// 引用腿（D10/D11）读哪些纸面：不写死这两份。本仓还跟踪着 deliverable.md，它印着
+// `js/main.js:21`、`js/main.js:330-333` 这样的行号引用，名单写死时那几条目没有任何一格读过，
+// 而 D11 那句「每一条 path:NN 引用都落在真实文件的行数内」照样打印。名单当场现数：
+// 问得到 git 就按被跟踪的 .md，问不到（台账副本没有 .git）就数仓根的 .md，用的哪一路印在明细里。
+const faceSrc = (() => {
+  const l = (spawnSync('git', ['-C', ROOT, 'ls-files', '-z', '*.md'], { encoding: 'utf8' }).stdout || '')
+    .split('\0').filter(Boolean);
+  return l.length
+    ? { from: 'git ls-files', faces: l }
+    : { from: 'readdirSync（问不到 git 索引）', faces: readdirSync(ROOT).filter((f) => f.endsWith('.md')) };
+})();
+const FACES = faceSrc.faces;
+const CITE_TEXT = FACES.map((f) => read(f)).join('\n');
 const ONE = DOCS.replace(/\n\s*/g, ' '); // 跨行抄的句子：把折行压平再对
 const CI = read('.github/workflows/ci.yml');
 const PAGES = read('.github/workflows/pages.yml');
@@ -581,7 +594,7 @@ if (want('D10')) {
   const lineOf = (file, re) => { const a = read(file).split('\n'); for (let i = 0; i < a.length; i++) if (re.test(a[i])) return i + 1; return -1; };
   const rangesFor = (file) => {
     const esc = file.replace(/[./]/g, '\\$&');
-    return [...DOCS.matchAll(new RegExp('`' + esc + ':(\\d+)(?:-(\\d+))?`', 'g'))].map((m) => [+(m[1]), +(m[2] || m[1])]);
+    return [...CITE_TEXT.matchAll(new RegExp('`' + esc + ':(\\d+)(?:-(\\d+))?`', 'g'))].map((m) => [+(m[1]), +(m[2] || m[1])]);
   };
   // 文档凡是「名字 + 位置」同现的引用——`name`（`file:NN-MM`）或（`file:NN-MM` 的 `name`）——逐条核：
   // 那个名字现在真的落在被引的那几行里吗？这是文档自己许下的「代码在哪一行」的说法，代码挪了位
@@ -593,10 +606,10 @@ if (want('D10')) {
     return null;
   };
   const named = [];
-  for (const m of DOCS.matchAll(/`([A-Za-z_][\w.$-]*(?:\(\))?)`\s*[（(]\s*`([\w./-]+?\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?`/g)) {
+  for (const m of CITE_TEXT.matchAll(/`([A-Za-z_][\w.$-]*(?:\(\))?)`\s*[（(]\s*`([\w./-]+?\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?`/g)) {
     named.push({ name: m[1], file: m[2], a: +m[3], b: +(m[4] || m[3]) });
   }
-  for (const m of DOCS.matchAll(/`([\w./-]+?\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?`\s*的\s*`([A-Za-z_][\w.$-]*(?:\(\))?)`/g)) {
+  for (const m of CITE_TEXT.matchAll(/`([\w./-]+?\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?`\s*的\s*`([A-Za-z_][\w.$-]*(?:\(\))?)`/g)) {
     named.push({ name: m[4], file: m[1], a: +m[2], b: +(m[3] || m[2]) });
   }
   const uniq = [];
@@ -655,7 +668,7 @@ if (want('D10')) {
 
 // ---- D11 泛引用范围：README + DESIGN 里每一条 path:NN / path:NN-MM 都落在真实文件行数内 ----
 if (want('D11')) {
-  const cites = [...DOCS.matchAll(/((?:\.github\/workflows\/|js\/|tools\/|css\/|electron\/)?[\w./-]+\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?/g)];
+  const cites = [...CITE_TEXT.matchAll(/((?:\.github\/workflows\/|js\/|tools\/|css\/|electron\/)?[\w./-]+\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?/g)];
   const resolve = (p) => {
     if (existsSync(join(ROOT, p))) return p;
     const base = p.split('/').pop();
@@ -843,6 +856,18 @@ if (want('D17')) {
     `type=${PKG.type} · 引擎 require=${/require\(/.test(PENCIL_SRC + GEN_SRC)} · html module=${/<script type="module"/.test(HTML)}`);
   ok(/`tools\/` 不进站点/.test(README) && !copies.some((c) => c === 'tools' || c.startsWith('tools/')),
     `D17e「tools/ 不进站点」这句与清单（${sources[0] || '没有出处'}）一致`, `清单 ${copies.join(' + ')}`);
+}
+
+// ---- D19 引用腿读哪些纸面：名单当场现数，而每一份都要真的贡献引用 ----
+// 这一组单独存在，是因为「输入集写死两份」这种洞不体现在任何一条引用上：deliverable.md 不在名单里时，
+// D10/D11 照样全绿——那份纸面上的引用一条都没被读，判据无从可判。所以这里判的是名单本身。
+if (want('D19')) {
+  const SHAPE = /((?:\.github\/workflows\/|js\/|tools\/|css\/|electron\/)?[\w./-]+\.(?:js|mjs|cjs|sh|json|html|yml)):(\d+)(?:-(\d+))?/g;
+  const faceCites = FACES.map((f) => ({ f, n: [...read(f).matchAll(SHAPE)].length }));
+  ok(FACES.length >= 3 && faceCites.every((x) => x.n > 0),
+    'D19a 引用腿的输入集是当场现数的（问得到 git 就按被跟踪的 .md，问不到就数仓根的 .md），而每一份面都真的贡献了引用'
+      + '（某份被跳过时这里红，而不是让 D10/D11 的总条数悄悄变少）',
+    `现数自 ${faceSrc.from} · ${FACES.length} 份：${faceCites.map((x) => `${x.f}=${x.n}`).join(' · ')}`);
 }
 
 // ---- D18 自数：这道闸自己发出的组数与项数都钉死 —— 删一条 test/少解析一行就是这里红 ----

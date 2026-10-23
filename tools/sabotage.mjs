@@ -160,10 +160,17 @@ const KNIVES = [
   },
   {
     id: 'K18', group: 'D18', file: 'tools/doctest.mjs',
-    from: 'const EXPECT_ROWS = 233;', to: 'const EXPECT_ROWS = 232;',
+    from: 'const EXPECT_ROWS = 236;', to: 'const EXPECT_ROWS = 235;',
     full: 1,
     breaks: '把本闸自己钉的项数悄悄改小 1（子集跑会 NOTE 掉自钉，所以这把必须整闸跑——那正是「删一条断言不改两处锁」这类谎的形状）',
     assert: /^.*FAIL .*D18b 本闸项数.*$/m,
+    rc: '1',
+  },
+  {
+    id: 'K19', group: 'D19', file: 'deliverable.md',
+    from: '`js/main.js:330-333`', to: '`js/main.js:99999-100002`',
+    breaks: '把 deliverable.md 里的一条行号引用改到界外（这一份面是这一轮才进引用腿输入集的：改之前它印的三条引用没有任何一格读过）',
+    assert: /^.*FAIL .*D19a 引用腿的输入集.*$/m,
     rc: '1',
   },
 ];

@@ -74,9 +74,9 @@ echo "$SERVED" | grep -qi masyu || { echo "port $HTTP is serving a different app
 # 期望表 DOCTEST_EXPECT_* / SABOTAGE_EXPECT_KNIVES 从闸自己打印的机器可读行（STAMP / KNIVES=）
 # 外面再钉一次：闸内自钉管「有没有少一条断言」，这里管「有没有人连钉本身都改小」。
 LOGIC_FAILED=0
-DOCTEST_EXPECT_GROUPS=18
-DOCTEST_EXPECT_ROWS=235
-SABOTAGE_EXPECT_KNIVES=18
+DOCTEST_EXPECT_GROUPS=19
+DOCTEST_EXPECT_ROWS=236
+SABOTAGE_EXPECT_KNIVES=19
 cd "$HERE"
 echo "=== 逻辑闸 tools/doctest.mjs（文档数字 == 代码 / balance / 四套纯 Node 闸的现跑）==="
 node tools/doctest.mjs >/tmp/masyu-doctest.log 2>&1
