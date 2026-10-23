@@ -167,9 +167,9 @@ const KNIVES = [
     rc: '1',
   },
   {
-    id: 'K19', group: 'D19', file: 'deliverable.md',
-    from: '`js/main.js:330-333`', to: '`js/main.js:99999-100002`',
-    breaks: '把 deliverable.md 里的一条行号引用改到界外（这一份面是这一轮才进引用腿输入集的：改之前它印的三条引用没有任何一格读过）',
+    id: 'K19', group: 'D19', file: 'deliverable.md', rename: 'deliverable-offline.md',
+    breaks: '把 deliverable.md 整份挪出树（D19a 的靶面就是「输入集里每一份面都真的贡献引用」，只能挪文件，不改内容；'
+      + '这一份里的现役引用由 D11 判，本轮 widened 的第一跑就是 D11 抓到它印的旧指针落在空行上）',
     assert: /^.*FAIL .*D19a 引用腿的输入集.*$/m,
     rc: '1',
   },
